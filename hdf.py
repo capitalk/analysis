@@ -47,8 +47,7 @@ def dict_to_hdf(data, path, header, feature_names = None):
   hdf.attrs['finished'] = True 
   hdf.close()
 
-def header_from_hdf_filename(filename):
-  f = h5py.File(filename)
+def header_from_hdf(f):
   a = f.attrs
   
   assert 'ccy1' in a
@@ -71,6 +70,11 @@ def header_from_hdf_filename(filename):
     'end_time' : a['end_time'],
     'features': a['features'], 
   }
+  return header   
+
+def header_from_hdf_filename(filename):
+  f = h5py.File(filename)
+  header = header_from_hdf(f)
   f.close()
   return header
 
@@ -112,7 +116,12 @@ def complete_hdf_exists(filename, feature_names):
   
   
 import numpy as np
-def load_from_hdf(path):
-  f = h5py.File(path)
+def dataframe_from_hdf(f):
   cols = dict([(k,np.array(v[:])) for k, v in f.items()])
-  return pandas.DataFrame(data=cols, index=f['t'], dtype='float')  
+  return pandas.DataFrame(data=cols, index=f['t'], dtype='float')
+
+def dataframe_from_hdf_filename(path):
+  f = h5py.File(path)
+  df = dataframe_from_hdf(f)
+  f.close()
+  return df 

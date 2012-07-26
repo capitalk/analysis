@@ -7,6 +7,7 @@ import cloud
 import fnmatch
 import os
 import random
+import h5py
 
 PICLOUD_ID = 2579
 PICLOUD_SECRET_KEY = 'f228c0325cf687779264a0b0698b0cfe40148d65'
@@ -63,23 +64,45 @@ def get_key(bucket_name, key_name, s3_cxn = None):
     raise RuntimeError(\
       "Could not find key " + key_name + " in bucket " + bucket_name)
 
-def get_matching_keys(bucket_name, key_pattern, s3_cxn = None):
+def parse_bucket_and_pattern(s):
+  s = s.strip()
+  if s.startswith("s3://"):
+    s = s[5:]
+  if s[-1] == '/':
+    s = s[:-1]
+  bucket_name, _, key_pattern = s.partition('/')
+  assert len(bucket_name) > 0
+  if len(key_pattern) == 0:
+    key_pattern = '*'
+  return bucket_name, key_pattern
+
+# key_pattern isn't given then assume it's part of bucket_name 
+def get_matching_keys(bucket_name, key_pattern, s3_cxn = None, output=True):
+  
+  if output:
+    print "Bucket = %s, pattern = %s" % (bucket_name, key_pattern)
+  assert bucket_name and len(bucket_name) > 0
+  assert key_pattern and len(key_pattern) > 0
+  
   if not any([wildcard in key_pattern for wildcard in ['*', '?', '[', ']', '!']]):
     # if there no special characters in the key pattern treat it as just an 
     # ordinary name 
-    return [get_key(bucket_name, key_pattern, s3_cxn = s3_cxn)]
+    matching_keys = [get_key(bucket_name, key_pattern, s3_cxn = s3_cxn)]
   else:
     b = get_bucket(bucket_name, s3_cxn = s3_cxn)
     matching_keys = []
     for k in b:
       if fnmatch.fnmatch(k.name, key_pattern):
         matching_keys.append(k)
-    return matching_keys
+  if output:
+    print "Found", len(matching_keys), "matching keys"
+  return matching_keys
 
-def get_matching_key_names(bucket_name, key_pattern, s3_cxn = None):
-  ks = get_matching_keys(bucket_name, key_pattern, s3_cxn = s3_cxn)
+# if key_pattern not given, assume that it's part of bucket_name
+def get_matching_key_names(bucket_name, key_pattern, s3_cxn = None, output=True):
+  ks = get_matching_keys(bucket_name, key_pattern, s3_cxn = s3_cxn, output=output)
   return [k.name for k in ks]
-
+  
 def set_s3_key_contents(key, filename, header = None):
   assert key.key is not None
   # retry since sometimes boto fails for mysterious reasons
@@ -104,9 +127,6 @@ def get_s3_key_contents(key, filename):
     time.sleep(1)
     key.get_contents_to_filename(filename)
 
-
-  
-
 def download_file_from_s3(bucket_name, key_name, s3_cxn = None, 
   debug=True, overwrite=False):
   tempdir = scratch_dir()
@@ -125,6 +145,10 @@ def download_file_from_s3(bucket_name, key_name, s3_cxn = None,
   else:
     get_s3_key_contents(in_key, full_filename)
   return full_filename
+
+def download_hdf_from_s3(bucket_name, key_name, s3_cxn = None):
+  filename = download_file_from_s3(bucket_name, key_name, s3_cxn = s3_cxn)
+  return h5py.File(filename)
   
 def upload_file_to_s3(filename, bucket_name, key_name, header = {}, s3_cxn = None, debug=True):
   if s3_cxn is None:
