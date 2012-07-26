@@ -103,30 +103,45 @@ def get_matching_key_names(bucket_name, key_pattern, s3_cxn = None, output=True)
   ks = get_matching_keys(bucket_name, key_pattern, s3_cxn = s3_cxn, output=output)
   return [k.name for k in ks]
   
-def set_s3_key_contents(key, filename, header = None):
-  assert key.key is not None
-  # retry since sometimes boto fails for mysterious reasons
-  try:
-    key.set_contents_from_filename(filename)
-  except SSLError:
-    # wait a second and then retry
-    time.sleep(1)
-    key.set_contents_from_filename(filename)
-   
-  if header:     
-    for k,v in header.items():
-      key.set_metadata(k, v)
-
-def get_s3_key_contents(key, filename):
+def set_s3_key_contents(key, filename, header = None, max_retries = 5):
   assert key.key is not None
   
-  try:
-    key.get_contents_to_filename(filename)
-    # retry if communication times out
-  except SSLError:
-    time.sleep(1)
-    key.get_contents_to_filename(filename)
-
+  n_retries = 0
+  
+  while True:
+    # retry since sometimes boto fails for mysterious reasons
+    try:
+      key.set_contents_from_filename(filename)
+      break
+    except SSLError:
+      if n_retries < max_retries:
+        time.sleep(0.5 + random.random())
+        n_retries += 1
+      else:
+        raise  
+        
+  if header:     
+    for k,v in header.items():
+      try:
+        key.set_metadata(k, v)
+      except SSLError:
+        key.set_metadata(k, v)
+        
+def get_s3_key_contents(key, filename, max_retries = 5):
+  assert key.key is not None
+  n_retries = 0
+  while True:
+    try:
+      key.get_contents_to_filename(filename)
+      break
+      # retry if communication times out
+    except SSLError:
+      if n_retries < max_retries:
+        time.sleep(0.5 + random.random())
+        n_retries += 1
+      else:
+        raise
+        
 def download_file_from_s3(bucket_name, key_name, s3_cxn = None, 
   debug=True, overwrite=False):
   tempdir = scratch_dir()

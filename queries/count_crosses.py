@@ -8,18 +8,16 @@ def count_crosses(hdf):
   date = (hdf.attrs['year'], hdf.attrs['month'], hdf.attrs['day'])
   count = np.sum(hdf['bid'][:] > hdf['offer'][:])
   print "Found", count, "crosses for", ccy, "on", date
-  return count, ccy
+  return ccy, count
 
-def combine(counts, (count,ccy)):
+def combine(counts, (ccy, count)):
   if ccy in counts: counts[ccy] += count
   else: counts[ccy] = count
   return counts 
 
 def convert_to_dataframe(total_counts):
-  ccys = total_counts.keys()
-  df = pandas.DataFrame({"count":total_counts.values()}, index=ccys)
-  return df
-  
+  return pandas.DataFrame({"count":total_counts.values()}, index=total_counts.keys())
+
 parser = OptionParser(usage = "usage: %prog s3://bucket-name/key-pattern")
 if __name__ == '__main__':
   (options, args) = parser.parse_args()

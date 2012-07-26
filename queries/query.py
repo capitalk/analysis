@@ -7,6 +7,7 @@ import hdf
 import cloud_helpers
 import cloud 
 import progressbar 
+import ssl 
 
 
 
@@ -27,6 +28,51 @@ def wrap_dataframe_mapper(fn):
     return result
   return do_work
   
+def launch_jobs(bucket, key_names, work_fn, combine, acc, label, _type, 
+  accept_none_as_result, retry_timeouts = True):
+  jids = cloud.map(lambda name: work_fn(bucket, name), key_names, _type = _type, _label= label)
+  
+  timed_out = []
+  try:
+    progress = progressbar.ProgressBar(len(jids)).start()
+
+    for (i, result) in enumerate(cloud.iresult(jids, num_in_parallel = 25)):
+      if result is None and not accept_none_as_result:
+        print "Job #", jids[i], key_names[i], "returned None"
+      elif combine:
+        # client-side reduction! Be careful about not doing too much
+        # work here
+        new_acc = combine(acc, result)
+        if new_acc is None and acc is not None:
+          print "Warning: You it looks like your combine fn unintentionally returns None"
+        acc = new_acc
+      progress.update(i+1)
+  except KeyboardInterrupt:
+    print "Caught keyboard interrupt, killing active workers..."
+    cloud.kill(jids)  
+    return acc  
+  except cloud.CloudException as e:
+    if isinstance(e.parameter, ssl.SSLError):
+      print "Job #", jids[i], "timed out"
+      timed_out.append(key_names[i])
+    else:
+      cloud.kill(jids)
+      raise
+  except:
+    cloud.kill(jids)
+    raise
+  finally:
+    progress.finish()
+  
+  if len(timed_out) > 0:
+    if retry_timeouts:
+      return launch_jobs(bucket, key_names, work_fn, combine, acc, 
+        label, _type, accept_none_as_result, retry_timeouts = None)
+    else:
+      raise RuntimeError(len(timed_out) + " jobs timed out while reading from S3")
+  return acc
+  
+   
 def run(bucket, key_pattern = None, 
   map_hdf = None, map_dataframe = None,
   init = None, combine = None,  post_process = None, 
@@ -77,33 +123,10 @@ def run(bucket, key_pattern = None,
   if label is None:
     label = "Mapping %s over %s/%s" % \
       ( (map_hdf if map_hdf else map_dataframe), bucket, key_pattern)
-      
-  jids = cloud.map(lambda name: do_work(bucket, name), \
-       key_names, _type = _type, _label= label)
-  try:
-    progress = progressbar.ProgressBar(len(jids)).start()
-    for (i, result) in enumerate(cloud.iresult(jids)):
-      if result is None and not accept_none_as_result:
-        print "Job #", jids[i], key_names[i], "returned None"
-      elif combine:
-        # client-side reduction! Be careful about not doing too much
-        # work here
-        new_acc = combine(acc, result)
-        if new_acc is None and acc is not None:
-          print "Warning: You it looks like your combine fn unintentionally returns None"
-        acc = new_acc
-      progress.update(i+1)
-  except KeyboardInterrupt:
-    print "Keyboard interrupt received, killing active workers..."
-    cloud.kill(jids)
-  except:
-    cloud.kill(jids)
-    raise
-  finally:
-    progress.finish()
-    
-  if post_process:
-    accumulator = post_process(accumulator)
-  return accumulator
-
-
+  
+  acc = launch_jobs(bucket, key_names, do_work, combine, acc,  
+    label, _type, accept_none_as_result)    
+ 
+  if post_process: return post_process(acc)
+  else: return acc
+  
