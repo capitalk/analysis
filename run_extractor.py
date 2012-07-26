@@ -1,51 +1,11 @@
 
 from optparse import OptionParser
-import os, os.path
-import h5py, datetime
-import boto
-import fnmatch 
+import os, os.path, datetime
 import progressbar  
 import cloud
 from extractor import extractor
-from hdf import header_from_hdf_filename, dict_to_hdf
-
-import sys
-
-sys.path.append('..')
-from cloud_helpers
-def same_features(f1, f2):
-  s1 = set(f1)
-  s2 = set(f2)
-  same = s1 == s2
-  if not same:
-    print "Different features:", \
-      s1.symmetric_difference(s2)
-  return same
-
- # file exists and 'finished' flag is true
-def file_already_done(filename):
-  if not os.path.exists(filename): 
-    print "Doesn't exist"
-    return False
-  try:
-      f = h5py.File(filename, 'r')
-      attrs = f.attrs
-      finished = 'finished' in attrs and attrs['finished']
-      has_ccy = 'ccy1' in attrs and 'ccy2' in attrs 
-      has_date = 'year' in attrs and 'month' in attrs and 'day' in f.attrs 
-      has_venue = 'venue' in attrs 
-      has_features = 'features' in attrs
-      if has_features:
-        have_same_features = same_features(set(attrs['features']), extractor.feature_names())
-      else:
-        have_same_features = False    
-      f.close()
-      return finished and has_ccy and has_date and has_venue and \
-        has_features and have_same_features  
-  except:
-      import sys
-      print sys.exc_info()
-      return False
+import hdf 
+import cloud_helpers
 
 def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, heap_profile=False):
   print "Start time:", datetime.datetime.now()
@@ -55,9 +15,9 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, h
       heap_profile = heap_profile)
 
   if dest_1ms:
-    dict_to_hdf(frames_1ms, dest_1ms, header, extractor.feature_names() )
+    hdf.dict_to_hdf(frames_1ms, dest_1ms, header, extractor.feature_names() )
   if dest_100ms:
-    dict_to_hdf(frames_100ms, dest_100ms, header, extractor.feature_names() )
+    hdf.dict_to_hdf(frames_100ms, dest_100ms, header, extractor.feature_names() )
   return header 
     
     
@@ -101,9 +61,10 @@ def process_local_dir(input_path, output_dir = None, max_books = None,
       dest_filename_1ms, dest_filename_100ms = \
         output_filenames (input_filename, output_dir)
       
+      feature_names = extractor.feature_names()
       if not overwrite and \
-         file_already_done(dest_filename_1ms) and \
-         file_already_done(dest_filename_100ms):
+         hdf.complete_hdf_exists(dest_filename_1ms, feature_names) and \
+         hdf.complete_hdf_exists(dest_filename_100ms, feature_names):
           print "Skipping %s found data files %s" \
             % (input_filename, [dest_filename_1ms, dest_filename_100ms])
       else:
@@ -113,12 +74,16 @@ def process_local_dir(input_path, output_dir = None, max_books = None,
     else:
       print "Unknown suffix for", filename  
 
-
-
 def process_s3_file(input_bucket_name, input_key_name, 
     output_bucket_name_1ms = None, 
     output_bucket_name_100ms = None, 
     overwrite = False):
+  
+  input_filename = cloud_helpers.download_file_from_s3(input_bucket_name, input_key_name)   
+  dest_1ms, dest_100ms = output_filenames(input_filename, cloud_helpers.scratch_dir())
+  
+  out_key_name_1ms = os.path.split(dest_1ms)[1]  
+  out_key_name_100ms = os.path.split(dest_100ms)[1]
   
   if output_bucket_name_1ms is None:
      output_bucket_name_1ms = input_bucket_name + "-hdf-1ms"
@@ -126,78 +91,33 @@ def process_s3_file(input_bucket_name, input_key_name,
   if output_bucket_name_100ms is None:
      output_bucket_name_100ms = input_bucket_name + "-hdf"
      
-  if os.access('/scratch/sgeadmin', os.F_OK | os.R_OK | os.W_OK):
-    print 'Using /scratch/sgeadmin for local storage'
-    tempdir = '/scratch/sgeadmin'
-  elif os.access('/tmp', os.F_OK | os.R_OK | os.W_OK):
-    print 'Using /tmp for local storage'
-    tempdir = '/tmp'
+  feature_names = extractor.feature_names()
+  
+  if not overwrite and \
+     cloud_helpers.hdf_already_on_s3(output_bucket_name_1ms, out_key_name_1ms, feature_names) and \
+     cloud_helpers.hdf_already_on_s3(output_bucket_name_100ms, out_key_name_100ms, feature_names):
+  
+    print "HDFs on S3 have same features, so skipping this input..."
+    return
   else:
-    print 'Using ./ for local storage'
-    tempdir = './'
-  input_filename = os.path.join(tempdir, input_key_name)
+    print "HDFs either not on S3 or have different features..."
   
-  s3_cxn = get_s3_cxn() 
-  in_bucket = s3_cxn.get_bucket(input_bucket_name)
-  assert in_bucket is not None
-  in_key = in_bucket.get_key(input_key_name)
-  if in_key is None:
-    raise RuntimeError(\
-      "Key Not Found: bucket = " + input_bucket_name  \
-      + ", input_key = " + input_key_name)
-  print "Downloading", input_key_name, "to", input_filename, "..."
-  if os.path.exists(input_filename) and \
-     os.path.getsize(input_filename) == in_key.size:
-    print "Already downloaded", input_filename, "from S3"
-  else:
-    get_s3_key_contents()
-      
-  dest_1ms, dest_100ms = output_filenames(input_filename, tempdir)
-  
-  filename_1ms = os.path.split(dest_1ms)[1]  
-  filename_100ms = os.path.split(dest_100ms)[1] 
-  
-  out_bucket_1ms = s3_cxn.get_bucket(output_bucket_name_1ms)  
-  out_bucket_100ms = s3_cxn.get_bucket(output_bucket_name_100ms)
-    
-  out_key_1ms = out_bucket_1ms.get_key(filename_1ms)
-  out_key_100ms = out_bucket_100ms.get_key(filename_100ms)
-  
-  feature_set = set(extractor.feature_names())
-  
-  if not overwrite and out_key_1ms is not None and out_key_100ms is not None:
-    print "Found", out_key_1ms, "and", out_key_100ms, "already on S3"
-    features_1ms = out_key_1ms.get_metadata('features')
-    features_100ms = out_key_100ms.get_metadata('features')
-    if features_1ms is not None and features_100ms is not None and \
-      same_features(feature_set, features_1ms) and \
-      same_features(feature_set, features_100ms):
-      print "HDFs on S3 have same features, so skipping this input..."
-      return
-    else:
-      print "HDFs on S3 have different features, so regenerating them..."
-        
-  if not overwrite and file_already_done(dest_1ms) and file_already_done(dest_100ms):
+  # In some weird situation we might have a local copy of the HDF already 
+  # finished but it just might not have been uploaded yet       
+  if not overwrite and hdf.complete_hdf_exists(dest_1ms, feature_names) and \
+     hdf.complete_hdf_exists(dest_100ms, feature_names):
     print "Found finished HDFs on local storage..."
-    header = header_from_hdf_filename(dest_1ms) 
+    header = hdf.header_from_hdf_filename(dest_1ms) 
   else:
     print "Running feature generator..."
     header = process_local_file(input_filename, dest_1ms, dest_100ms)
 
-  if out_key_1ms is None:
-    out_key_1ms = boto.s3.key.Key(out_bucket_1ms)
-    out_key_1ms.key = filename_1ms
-    
-  if out_key_100ms is None:
-    out_key_100ms = boto.s3.key.Key(out_bucket_100ms)
-    out_key_100ms.key = filename_100ms
- 
-  print "Uploading 1ms feature file..."
-  set_s3_key_contents(out_key_1ms, dest_1ms, header)
- 
-  print "Uploading 100ms feature file..."
-  # retry, since boto can time out for bizarre reasons
-  set_s3_key_contents(out_key_100ms, dest_100ms, header)
+  
+  print "Uploading 1ms feature file", dest_1ms, "to", output_bucket_name_1ms, "/", out_key_name_1ms
+  cloud_helpers.upload_file_to_s3(dest_1ms, output_bucket_name_1ms, out_key_name_1ms, header)
+  print "Uploading 100ms feature file", dest_100ms, "to", output_bucket_name_100ms, "/", out_key_name_100ms
+  cloud_helpers.upload_file_to_s3(dest_100ms, output_bucket_name_100ms, out_key_name_100ms, header)
+  
   
 def process_s3_files(input_bucket_name, key_glob = '*', 
       output_bucket_name_1ms = None, 
@@ -211,19 +131,14 @@ def process_s3_files(input_bucket_name, key_glob = '*',
   if output_bucket_name_100ms is None:
     output_bucket_name_100ms = input_bucket_name + "-hdf" 
   
-  s3_cxn = get_s3_cxn()    
-  in_bucket = s3_cxn.get_bucket(input_bucket_name)
+  matching_keys = cloud_helpers.get_matching_key_names(input_bucket_name, key_glob)
   
+  s3_cxn = cloud_helpers.get_s3_cxn()    
   # create output buckets if they don't already exist
   # it's better to do this before launching remote computations 
   s3_cxn.create_bucket(output_bucket_name_1ms)
   s3_cxn.create_bucket(output_bucket_name_100ms)
   
-  matching_keys = []
-  for k in in_bucket:
-    if fnmatch.fnmatch(k.name, key_glob):
-      matching_keys.append(k.name)
-     
   if use_cloud:
     print "Launching %d jobs" % len(matching_keys)
     def do_work(key_name):

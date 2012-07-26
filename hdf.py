@@ -73,6 +73,43 @@ def header_from_hdf_filename(filename):
   }
   f.close()
   return header
+
+
+def same_features(f1, f2):
+  s1 = set(f1)
+  s2 = set(f2)
+  same = s1 == s2
+  if not same:
+    print "Different features:", \
+      s1.symmetric_difference(s2)
+  return same
+
+ # file exists and 'finished' flag is true
+def complete_hdf_exists(filename, feature_names):
+  if not os.path.exists(filename): 
+    print "Doesn't exist"
+    return False
+  try:
+      f = h5py.File(filename, 'r')
+      attrs = f.attrs
+      finished = 'finished' in attrs and attrs['finished']
+      has_ccy = 'ccy1' in attrs and 'ccy2' in attrs 
+      has_date = 'year' in attrs and 'month' in attrs and 'day' in f.attrs 
+      has_venue = 'venue' in attrs 
+      has_features = 'features' in attrs
+      if has_features:
+        have_same_features = same_features(attrs['features'], feature_names)
+      else:
+        have_same_features = False    
+      f.close()
+      return finished and has_ccy and has_date and has_venue and \
+        has_features and have_same_features  
+  except:
+      import sys
+      print sys.exc_info()
+      return False
+
+  
   
 import numpy as np
 def load_from_hdf(path):
