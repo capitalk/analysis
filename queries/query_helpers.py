@@ -10,4 +10,5 @@ def summarize_dict(d):
     stats.setdefault('median', []).append(np.median(xs))
     stats.setdefault('lower_quartile', []).append(scoreatpercentile(xs, 25)) 
     stats.setdefault('upper_quartile', []).append(scoreatpercentile(xs, 75))
+    stats.setdefault('count', []).append(len(xs))
   return pandas.DataFrame(stats, index = d.keys())
