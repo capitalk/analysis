@@ -43,9 +43,7 @@ def launch_jobs(bucket, key_names, work_fn, combine, acc, label, _type,
         # client-side reduction! Be careful about not doing too much
         # work here
         new_acc = combine(acc, result)
-        if new_acc is None and acc is not None:
-          print "Warning: You it looks like your combine fn unintentionally returns None"
-        acc = new_acc
+        if new_acc is not None: acc = new_acc
       progress.update(i+1)
   except KeyboardInterrupt:
     print "Caught keyboard interrupt, killing active workers..."
