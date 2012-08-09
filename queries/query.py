@@ -50,24 +50,23 @@ def launch_jobs(bucket, key_names, work_fn, combine, acc, label, _type,
     cloud.kill(jids)  
     return acc  
   except cloud.CloudException as e:
-    if isinstance(e.parameter, ssl.SSLError):
+    if isinstance(e.parameter, ssl.SSLError) and retry_timeouts:
       print "Job #", jids[i], "timed out"
       timed_out.append(key_names[i])
     else:
+      print "Killing workers..."
       cloud.kill(jids)
       raise
   except:
+    print "Killing workers..."
     cloud.kill(jids)
     raise
   finally:
     progress.finish()
   
   if len(timed_out) > 0:
-    if retry_timeouts:
-      return launch_jobs(bucket, key_names, work_fn, combine, acc, 
-        label, _type, accept_none_as_result, retry_timeouts = None)
-    else:
-      raise RuntimeError(len(timed_out) + " jobs timed out while reading from S3")
+    return launch_jobs(bucket, key_names, work_fn, combine, acc, 
+      label, _type, accept_none_as_result, retry_timeouts = None)
   return acc
   
    

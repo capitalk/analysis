@@ -30,5 +30,5 @@ if __name__ == '__main__':
   df = query.run(args.pattern, 
     map_hdf = cross_amounts, 
    init = {}, combine = combine, 
-   post_process = query_helpers.summarize_dict )
+   post_process = query_helpers.summarize_continuous)
   print df

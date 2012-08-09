@@ -9,7 +9,7 @@ def cross_durations(hdf):
   return ccy, durs   
     
 def combine(all_durs, (ccy,durs)):
-  all_durs.setdefault(ccy, []).extend(durs)
+  all_durs.setsdefault(ccy, []).extend(durs)
   
 parser = OptionParser(usage = "usage: %prog s3://bucket-name/key-pattern")
 if __name__ == '__main__':
@@ -17,5 +17,5 @@ if __name__ == '__main__':
   assert len(args)==1
   df = query.run(args[0], map_hdf = cross_durations, 
    init = {}, combine = combine, 
-   post_process = query_helpers.summarize_dict_columns)
+   post_process = query_helpers.summarize_continuous)
   print df

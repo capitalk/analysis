@@ -1,6 +1,8 @@
 
 import boto 
 from ssl import SSLError  
+from socket import error as SocketError
+from httplib import IncompleteRead
 import socket
 import time 
 import cloud
@@ -103,30 +105,6 @@ def get_matching_key_names(bucket_name, key_pattern, s3_cxn = None, output=True)
   ks = get_matching_keys(bucket_name, key_pattern, s3_cxn = s3_cxn, output=output)
   return [k.name for k in ks]
   
-def set_s3_key_contents(key, filename, header = None, max_retries = 5):
-  assert key.key is not None
-  
-  n_retries = 0
-  
-  while True:
-    # retry since sometimes boto fails for mysterious reasons
-    try:
-      key.set_contents_from_filename(filename)
-      break
-    except SSLError:
-      if n_retries < max_retries:
-        time.sleep(0.5 + random.random())
-        n_retries += 1
-      else:
-        raise  
-        
-  if header:     
-    for k,v in header.items():
-      try:
-        key.set_metadata(k, v)
-      except SSLError:
-        key.set_metadata(k, v)
-        
 def get_s3_key_contents(key, filename, max_retries = 5):
   assert key.key is not None
   n_retries = 0
@@ -135,9 +113,10 @@ def get_s3_key_contents(key, filename, max_retries = 5):
       key.get_contents_to_filename(filename)
       break
       # retry if communication times out
-    except SSLError:
+    except (IncompleteRead, SocketError, SSLError), e:
       if n_retries < max_retries:
-        time.sleep(0.5 + random.random())
+        print "Caught exception: %r.\nRetrying..." % e
+        time.sleep((2 ** n_retries) / 2.0) # Exponential backoff
         n_retries += 1
       else:
         raise
@@ -164,6 +143,32 @@ def download_file_from_s3(bucket_name, key_name, s3_cxn = None,
 def download_hdf_from_s3(bucket_name, key_name, s3_cxn = None):
   filename = download_file_from_s3(bucket_name, key_name, s3_cxn = s3_cxn)
   return h5py.File(filename)
+
+  
+def set_s3_key_contents(key, filename, header = None, max_retries = 5):
+  assert key.key is not None
+  
+  n_retries = 0
+  
+  while True:
+    # retry since sometimes boto fails for mysterious reasons
+    try:
+      key.set_contents_from_filename(filename)
+      break
+    except (SocketError, SSLError), e:
+      if n_retries < max_retries:
+        print "Caught exception: %r.\nRetrying..." % e
+        time.sleep((2 ** n_retries) / 2.0) # Exponential backoff
+        n_retries += 1
+      else:
+        raise  
+        
+  if header:     
+    for k,v in header.items():
+      try:
+        key.set_metadata(k, v)
+      except SSLError:
+        key.set_metadata(k, v)
   
 def upload_file_to_s3(filename, bucket_name, key_name, header = {}, s3_cxn = None, debug=True):
   if s3_cxn is None:
