@@ -17,8 +17,8 @@ def process_local_file(input_filename, dest_1ms, dest_100ms, max_books = None, h
   if dest_1ms:
     hdf.dict_to_hdf(frames_1ms, dest_1ms, header, extractor.feature_names() )
   if dest_100ms:
-    hdf.dict_to_hdf(frames_100ms, dest_100ms, header, extractor.feature_names() )
-  return header 
+    hdf.dict_to_hdf(frames_100ms, dest_100ms, header, extractor.feature_names())
+  return header
     
     
 def output_filenames(input_path, feature_dir = None):
@@ -112,11 +112,13 @@ def process_s3_file(input_bucket_name, input_key_name,
     print "Running feature generator..."
     header = process_local_file(input_filename, dest_1ms, dest_100ms)
 
-  
+  print "Header:", header
   print "Uploading 1ms feature file", dest_1ms, "to", output_bucket_name_1ms, "/", out_key_name_1ms
-  cloud_helpers.upload_file_to_s3(dest_1ms, output_bucket_name_1ms, out_key_name_1ms, header)
+  cloud_helpers.upload_file_to_s3(\
+    dest_1ms, output_bucket_name_1ms, out_key_name_1ms, header)
   print "Uploading 100ms feature file", dest_100ms, "to", output_bucket_name_100ms, "/", out_key_name_100ms
-  cloud_helpers.upload_file_to_s3(dest_100ms, output_bucket_name_100ms, out_key_name_100ms, header)
+  cloud_helpers.upload_file_to_s3(\
+    dest_100ms, output_bucket_name_100ms, out_key_name_100ms, header)
   
   
 def process_s3_files(input_bucket_name, key_glob = '*', 

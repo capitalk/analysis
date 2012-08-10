@@ -10,6 +10,7 @@ import fnmatch
 import os
 import random
 import h5py
+import cPickle
 
 PICLOUD_ID = 2579
 PICLOUD_SECRET_KEY = 'f228c0325cf687779264a0b0698b0cfe40148d65'
@@ -124,9 +125,10 @@ def get_s3_key_contents(key, filename, max_retries = 5):
 def download_file_from_s3(bucket_name, key_name, s3_cxn = None, 
   debug=True, overwrite=False):
   tempdir = scratch_dir()
-  if debug:
-    print "Using", tempdir, "for local storage"
-    
+
+  #if debug:
+    #print "Using", tempdir, "for local storage"
+    #print "Attempting to download %s:%s" % (bucket_name, key_name)    
   full_filename = os.path.join(tempdir, key_name)
   
   in_key = get_key(bucket_name, key_name)
@@ -145,7 +147,8 @@ def download_hdf_from_s3(bucket_name, key_name, s3_cxn = None):
   return h5py.File(filename)
 
   
-def set_s3_key_contents(key, filename, header = None, max_retries = 5):
+def set_s3_key_contents(key, filename, max_retries = 5):
+   
   assert key.key is not None
   
   n_retries = 0
@@ -161,16 +164,15 @@ def set_s3_key_contents(key, filename, header = None, max_retries = 5):
         time.sleep((2 ** n_retries) / 2.0) # Exponential backoff
         n_retries += 1
       else:
-        raise  
-        
-  if header:     
-    for k,v in header.items():
-      try:
-        key.set_metadata(k, v)
-      except SSLError:
-        key.set_metadata(k, v)
-  
+        raise          
+
 def upload_file_to_s3(filename, bucket_name, key_name, header = {}, s3_cxn = None, debug=True):
+  
+  print "Setting contents of S3 key %s to file %s w/ header = %s" % \
+     (bucket_name + ":" + key_name, filename, header)
+  
+  print "WARNING: Gave up making metadata work, I hate S3, should probably use simpledb"
+  
   if s3_cxn is None:
     s3_cxn = get_s3_cxn()
   
@@ -201,11 +203,28 @@ def upload_file_to_s3(filename, bucket_name, key_name, header = {}, s3_cxn = Non
   except SSLError:
     key = bucket.get_key(key_name)
   
-  if key is None:
+  # encode the header 
+  header = dict( [ (str(k), cPickle.dumps(v)) for (k,v) in header.items()])
+  
+  #if key: 
+  #  if debug:
+  #    print "Copying old key with new metadata"
+  #  try:
+  #    key.copy(bucket.name, key.name, metadata = header)
+  #  except SSLError:
+  #    key.copy(bucket.name, key.name, metadata = header)
+  #  # get the copied key off the server 
+  #  try:
+  #    key = bucket.lookup(key.name)
+  #  except SSLError:
+  #    key = bucket.lookup(key.name)
+      
+  #else:
+  if key is None:  
     if debug:
       print "Key name", key_name, "not found, creating new key" 
     try:
-      key = boto.s3.key.Key(bucket)
+      key = boto.s3.key.Key(bucket) #, metadata = header)
     except:
       # sleep for a random amount since not sure if creating a key
       # can create a concurrency conflict AND I DON'T TRUST S3
@@ -213,12 +232,12 @@ def upload_file_to_s3(filename, bucket_name, key_name, header = {}, s3_cxn = Non
       if debug:
         print "S3 error, backing off for ", (1+r), "seconds and then retrying..."  
       time.sleep(1+r)
-      key = boto.s3.key.Key(bucket)
+      key = boto.s3.key.Key(bucket) #, metadata = header)
       
   if key is None:
     raise RuntimeError("Couldn't create new key in bucket" + bucket_name)
   key.key = key_name 
-  set_s3_key_contents(key, filename, header)
+  set_s3_key_contents(key, filename)
   
 from hdf import same_features
 def hdf_already_on_s3(bucket_name, key_name,  required_features, s3_cxn = None, 
@@ -251,5 +270,7 @@ def hdf_already_on_s3(bucket_name, key_name,  required_features, s3_cxn = None,
   if features is None:
     print "Missing features attribute"
     return False
-
+  elif not isinstance(features, list) or isinstance(features, set):
+    print "Decoding features"
+    features = cPickle.loads(features)
   return same_features(features, required_features)

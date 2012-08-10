@@ -30,7 +30,12 @@ def wrap_dataframe_mapper(fn):
   
 def launch_jobs(bucket, key_names, work_fn, combine, acc, label, _type, 
   accept_none_as_result, retry_timeouts = True):
-  jids = cloud.map(lambda name: work_fn(bucket, name), key_names, _type = _type, _label= label)
+  jids = cloud.map(\
+    lambda name: work_fn(bucket, name), 
+    key_names, 
+    _type = _type, 
+    _label= label, 
+    _env = 'compute')
   
   timed_out = []
   try:
