@@ -6,6 +6,7 @@ from sklearn.linear_model import LogisticRegression
 import math 
 import cloud
 import cloud_helpers 
+import h5py 
 
 def mad(x):
   """median absolute deviation from the sample median"""
@@ -114,7 +115,11 @@ def all_param_combinations(options, filter=lambda x: False):
   return [p for p in params if not filter(p)]
   
   
-def gen_feature_params(raw_features=['bid', 'offer']):
+def gen_feature_params(raw_features=None):
+  # raw_features is None means that each worker should figure out the common
+  # feature set of its files 
+  if raw_features is None:
+    raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
     
@@ -136,7 +141,7 @@ def gen_feature_params(raw_features=['bid', 'offer']):
       (x.normalizer is not None and x.past_lag is not None)
   return all_param_combinations(options, filter = filter)
 
-def extract_feature(hdf, param, normalizer = None):
+def extract_feature(hdf, param,  normalizer = None):
   x = hdf[param.raw_feature][:]
   n = len(x)
   
@@ -189,7 +194,7 @@ def fit_normalizers(hdfs, features):
         # so we don't overfit by normalization
       data = []
       for hdf in hdfs[:half]:
-        print "[fit_normalizers]", i, f, hdf
+        print "[fit_normalizers]", hdf, f
         col = hdf[f.raw_feature][:]
         data.append(col)
       data = np.concatenate(data)
@@ -205,42 +210,69 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, norma
   future_offset_ticks = 10 * future_offset
   print "[construct_dataset] Future_offset = %s" % future_offset_ticks
   
+  all_lags = [0] + [f.past_lag for f in features if f.past_lag is not None]
+  all_aggregator_window_sizes = [0] + \
+     [f.aggregator_window_size for f in features if f.aggregator_window_size is not None]
+  
+  max_lag = max(all_lags)
+  max_aggregator_window_size = max(all_aggregator_window_sizes)
+  
   # TODO: Actually use start_hour and end_hour 
   if normalizers is None:
     normalizers = fit_normalizers(hdfs, features)
   
-  for hdf in hdfs:
-    
-    bids = hdf['bid'][:]
-    # signal is: will the bid go up in some number of seconds
-    y = bids[future_offset_ticks:] > bids[:-future_offset_ticks]
-    outputs.append(y)
-     
-    cols = []
-    # construct all the columns for a subset of rows
-    for (i, f) in enumerate(features):
-      print "[construct_dataset]", i, f, hdf 
-      N = normalizers[i]
-      col, _ = extract_feature(hdf, f, N)
-      #print "A", col
-      
-      # remove last future_offset*10 ticks, since we have no output for them
-      col = col[:-future_offset_ticks]
-      #print "B", col
-      cols.append(col)
-    mat = np.hstack(cols)
-    # print "mat shape", mat.shape
-    inputs.append(mat)
-  return np.vstack(inputs).T, np.concatenate(outputs), normalizers
+  cached_inputs = {}
+  cached_outputs = {}
   
-def download_hdfs(bucket, keys):
-  print "[download_hdfs]", keys
-  hdfs = []
-  for key in keys:
-    hdf = cloud_helpers.download_hdf_from_s3(bucket, key)
-    hdfs.append(hdf)
-  print "[download_hdfs] Done!"
-  return hdfs 
+  for (i, hdf) in enumerate(hdfs):
+    
+    
+    if hdf.filename in cached_inputs:
+      mat = cached_inputs[hdf.filename]
+    else: 
+      cols = []
+      # construct all the columns for a subset of rows
+      for (i, f) in enumerate(features):
+        N = normalizers[i]
+        col, _ = extract_feature(hdf, f, N)
+        print "Original column length for %s: %d" % (f, len(col))
+        # remove last future_offset*10 ticks, since we have no output for them
+        col = col[:-future_offset_ticks]
+        # skip some of the past if it's also seen by the feature with max. lag
+        amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
+        col = col[amt_lag_trim:]
+        
+        # if you're being aggregated in smaller windows than some other feature
+        # then you should snip off some of your starting samples 
+        amt_agg_window_trim = max_aggregator_window_size - \
+          (0 if f.aggregator_window_size is None else f.aggregator_window_size)
+        col = col[amt_agg_window_trim:]
+        print "Final column length for %s : %d" % (f, len(col))
+        cols.append(col)
+      mat = np.array(cols)
+      cached_inputs[hdf.filename] = mat
+    
+    inputs.append(mat)
+    # signal is: will the bid go up in some number of seconds
+    if hdf.filename in cached_outputs:
+      y = cached_outputs[hdf.filename]
+    else:
+      bids = hdf['bid'][:]
+      y = bids[future_offset_ticks:] > bids[:-future_offset_ticks]
+      y = y[max_aggregator_window_size + max_lag:]
+      cached_outputs[hdf.filename] = y
+    outputs.append(y)
+    print "%d, feature shape: %s, output shape: %s" % (i, mat.shape, y.shape)
+  
+  inputs = np.hstack(inputs).T
+  outputs = np.concatenate(outputs)
+  return inputs, outputs, normalizers 
+  
+def common_features(hdfs):
+  feature_set = set(hdfs[0].attrs['features'])
+  for hdf in hdfs[1:]:
+    feature_set = feature_set.intersection(set(hdf.attrs['features']))
+  return feature_set 
 
 # affects only future self, no time travel but watch for self improvement
 # and itching, but actually it just might be autoimmune or a mosquito 
@@ -252,43 +284,73 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
     num_training_days = 16, start_hour = 3, end_hour = 7, future_offset = 30):
   if new_param in old_params:
     return None
-  params = old_params + [new_param]
+
   n_files = len(hdf_keys)
+  print "Downloading all HDFs..."
+  #import multiprocessing
+  #pool = multiprocessing.Pool(10)
+  cloud.config.num_procs = 20
+  cloud.config.commit()
   
-  accs = []
-  for test_idx in np.arange(n_files)[num_training_days:]:
-    training_filenames = hdf_keys[(test_idx - num_training_days):test_idx]
-    test_filename = hdf_keys[test_idx]
-    print "Downloading HDF files for %d / %d" % (test_idx, n_files)
-    training_hdfs = download_hdfs(bucket, training_filenames)
-    test_hdf = cloud_helpers.download_hdf_from_s3(bucket, test_filename)
-    print "Constructing dataset for %d / %d" % (test_idx, n_files)
-    x_train, y_train, normalizers = \
-      construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour, None)
-    x_test, y_test, _ = \
-      construct_dataset([test_hdf], params, future_offset, start_hour, end_hour, normalizers)
-    print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
-    print "Training model..."
-    #model = RandomForestClassifier(n_estimators = 100)
-    #model = LinearSVC()
-    model = LogisticRegression()
-    model.fit(x_train, y_train)
-    print "Generating predictions"
-    pred = model.predict(x_test)
-    acc = np.mean(pred == y_test)
-    print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
-    accs.append(acc)
-  med_acc = np.median(acc)
-  print "Median accuracy: %s" % med_acc
-  return med_acc
+  hdfs = []
+  if True:
+    jids = cloud.mp.map(lambda k: cloud_helpers.download_file_from_s3(bucket, k), hdf_keys)
+    for (i, filename) in enumerate(cloud.mp.iresult(jids, num_in_parallel = 10)):
+      print "Done downloading file #%d: %s" % (i, filename)
+      hdf = h5py.File(filename)
+      hdfs.append(hdf)
+  else:
+    for k in hdf_keys:
+      print "Downloading %s:%s" % (bucket, k)
+      hdf = cloud_helpers.download_hdf_from_s3(bucket, k)
+      hdfs.append(hdf)
+      
+  if new_param.raw_feature is None:
+    raw_features = common_features(hdfs)
+  else:
+    raw_features = [new_param.feature]
+  print "Raw features: ", raw_features
+  result = {}
+  for raw_feature in raw_features:
+    param = FeatureParams(raw_feature = raw_feature, 
+      aggregator = new_param.aggregator, 
+      aggregator_window_size = new_param.aggregator_window_size, 
+      normalizer = new_param.normalizer, 
+      past_lag = new_param.past_lag, 
+      transform = new_param.transform)
+    print param
+    params = old_params + [param]
+    accs = []
+    for test_idx in np.arange(n_files)[num_training_days:]:
+      training_hdfs = hdfs[(test_idx - num_training_days):test_idx]
+      test_hdf = hdfs[test_idx]
+      print "Constructing dataset for %d / %d" % (test_idx, n_files)
+      x_train, y_train, normalizers = \
+        construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour, None)
+      x_test, y_test, _ = \
+        construct_dataset([test_hdf], params, future_offset, start_hour, end_hour, normalizers)
+      print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+      print "Training model..."
+
+      model = LogisticRegression()
+      model.fit(x_train, y_train)
+      print "Generating predictions"
+      pred = model.predict(x_test)
+      acc = np.mean(pred == y_test)
+      print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
+      accs.append(acc)
+    med_acc = np.median(acc)
+    print "Median accuracy: %s" % med_acc
+    result[param] = med_acc
+  return result
     
 def launch_jobs(hdf_bucket, hdf_keys, raw_features = None, 
-    num_training_days = 16, start_hour = 3, end_hour = 7):
-  if raw_features is None:
-    print "Downloading ", hdf_keys[0]
-    hdf = cloud_helpers.download_hdf_from_s3(hdf_bucket, hdf_keys[0])
-    raw_features = hdf.attrs['features']
-  print "Raw features", raw_features
+    num_training_days = 16, start_hour = 3, end_hour = 7, run_local = False):
+  #if raw_features is None:
+  #  print "Downloading ", hdf_keys[0]
+  #  hdf = cloud_helpers.download_hdf_from_s3(hdf_bucket, hdf_keys[0])
+  #  raw_features = hdf.attrs['features']
+  #print "Raw features", raw_features
   all_params = gen_feature_params(raw_features)
   print "Launching %d jobs" % len(all_params)
   old_chosen_params = []
@@ -298,7 +360,8 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
       num_training_days = num_training_days, 
       start_hour = start_hour, 
       end_hour = end_hour)
-  jids = cloud.map(do_work, 
+  mapper = cloud.mp.map if run_local else cloud.map 
+  jids = mapper(do_work, 
     all_params, 
     _env = 'compute', 
     _label=label, 
@@ -308,21 +371,30 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
   best_acc = 0
   best_param = None
   results = {}
-  for (i, acc) in enumerate(cloud.iresult(jids)):
-    results[all_params[i]]  = acc
-    if acc and acc > best_acc:
-      best_acc = acc
-      best_param = all_params[i]
-    elif acc and acc < worst_acc:
-      worst_acc = acc
-      worst_param = all_params[i]
+  for (i, result) in enumerate(cloud.iresult(jids)):
+    # result can be 
+    #  (1) None (if param was involid)
+    #  (2) a single accuracy (if single parameter was sent)
+    #  (3) a dictionary mapping parameters to accuracies 
+    if result is None:
+      result = {}
+    elif not isinstance(result, dict):
+      result = {all_params[i]: result}
+    for (param, acc) in result.items():
+      results[param]  = acc
+      if acc and acc > best_acc:
+        best_acc = acc
+        best_param = all_params[i]
+      elif acc and acc < worst_acc:
+        worst_acc = acc
+        worst_param = all_params[i]
   return best_acc, best_param, worst_acc, worst_param, results
 
 #def get_common_features(bucket, key_names):
 #   features = None
 #   for k in key_names: 
      
-def single_feature_search(pattern, num_training_days, start_hour, end_hour):
+def single_feature_search(pattern, num_training_days, start_hour, end_hour, run_local):
   bucket, key_pattern = cloud_helpers.parse_bucket_and_pattern(pattern)
   if len(key_pattern) == 0:
     key_pattern = '*'
@@ -330,16 +402,17 @@ def single_feature_search(pattern, num_training_days, start_hour, end_hour):
   #raw_features = get_common_features(bucket, key_names)
   #print "Raw features:", raw_features
   return launch_jobs(bucket, key_names, raw_features = None, 
-    training_window = num_training_days, 
+    num_training_days = num_training_days, 
     start_hour = start_hour, 
-    end_hour = end_hour)
+    end_hour = end_hour, 
+    run_local = run_local)
   
 
 from argparse import ArgumentParser 
 parser = ArgumentParser(description='Look for single best feature')
 parser.add_argument('pattern', metavar='P', type=str,
                        help='s3://capk-bucket/some-hdf-pattern')
-parser.add_argument('--cloud-simulator', dest="cloud_simulator", 
+parser.add_argument('--run-local', dest="run_local", 
   action="store_true", default=False)
 parser.add_argument('--num-training-days', 
   dest='num_training_days', type = int, default=16)
@@ -352,11 +425,9 @@ if __name__ == '__main__':
   args = parser.parse_args()
   assert args.pattern 
   assert len(args.pattern) > 0
-  if args.cloud_simulator:
-    cloud.start_simulator()
   best_acc, best_param, worst_acc, worst_param, results = \
     single_feature_search(args.pattern, args.num_training_days, 
-    args.start_hour, args.end_hour)
+    args.start_hour, args.end_hour, args.run_local)
   print results
   print "Worst param: %s, accuracy = %s" % (worst_param, worst_acc)
   print "Best param: %s, accuracy = %s" % (best_param, best_acc)
