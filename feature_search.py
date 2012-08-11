@@ -123,17 +123,17 @@ def gen_feature_params(raw_features=None):
   options = { 
     'raw_feature' : raw_features,
     
-    'aggregator' : [np.median], #[np.median, mad, crossing_rate],
+    'aggregator' : [np.median, mad, crossing_rate], #[np.median]
      
      # window sizes in seconds
-     'aggregator_window_size' : [1], #[1, 10, 100], 
-     'normalizer': [LaplaceScore], #[None, ZScore, LaplaceScore],
+     'aggregator_window_size' : [10, 100, 1000], # [10],
+     'normalizer': [None, ZScore, LaplaceScore], #[LaplaceScore]
 
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
-     'past_lag':  [None], #[None, 5, 20, 30, 40, 60, 120, 600],
+     'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], #[None], #[
     
-     'transform' : [np.square], #[None, np.square]
+     'transform' : [None, np.square], # [np.square], #
   }
   def filter(x):
     return \
@@ -157,7 +157,7 @@ def extract_feature(hdf, param,  normalizer = None):
     x = N.transform(x)
     
   # window size is in seconds, but each tick is 100ms
-  w = 10 * param.aggregator_window_size
+  w = param.aggregator_window_size
   n_agg = n - w
   aggregated = np.zeros(n_agg)
   agg_fn = param.aggregator
@@ -169,9 +169,8 @@ def extract_feature(hdf, param,  normalizer = None):
     lagged = aggregated
   
   else:
-    # like window size, lag is in seconds, but ticks are 100ms
-    future = aggregated[10*lag:]
-    present  = aggregated[:-10*lag]
+    future = aggregated[lag:]
+    present  = aggregated[:-lag]
     diff = future - present
     lagged = 100 * diff / present 
     
@@ -203,12 +202,11 @@ def fit_normalizers(hdfs, features):
       normalizers.append(N)
   return normalizers 
   
-def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, normalizers = None):
+def construct_dataset(hdfs, features, future_offset, start_hour, end_hour,
+     normalizers = None, cached_inputs = {}, cached_outputs = {}):
   inputs = []
   outputs = []
-  # future offset is in seconds, ticks are 100ms
-  future_offset_ticks = 10 * future_offset
-  print "[construct_dataset] Future_offset = %s" % future_offset_ticks
+  print "[construct_dataset] Future_offset = %s" % future_offset
   
   all_lags = [0] + [f.past_lag for f in features if f.past_lag is not None]
   all_aggregator_window_sizes = [0] + \
@@ -221,12 +219,7 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, norma
   if normalizers is None:
     normalizers = fit_normalizers(hdfs, features)
   
-  cached_inputs = {}
-  cached_outputs = {}
-  
   for (i, hdf) in enumerate(hdfs):
-    
-    
     if hdf.filename in cached_inputs:
       mat = cached_inputs[hdf.filename]
     else: 
@@ -235,9 +228,9 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, norma
       for (i, f) in enumerate(features):
         N = normalizers[i]
         col, _ = extract_feature(hdf, f, N)
-        print "Original column length for %s: %d" % (f, len(col))
-        # remove last future_offset*10 ticks, since we have no output for them
-        col = col[:-future_offset_ticks]
+        #print "Original column length for %s: %d" % (f, len(col))
+        # remove last future_offset ticks, since we have no output for them
+        col = col[:-future_offset]
         # skip some of the past if it's also seen by the feature with max. lag
         amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
         col = col[amt_lag_trim:]
@@ -247,7 +240,7 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, norma
         amt_agg_window_trim = max_aggregator_window_size - \
           (0 if f.aggregator_window_size is None else f.aggregator_window_size)
         col = col[amt_agg_window_trim:]
-        print "Final column length for %s : %d" % (f, len(col))
+        #print "Final column length for %s : %d" % (f, len(col))
         cols.append(col)
       mat = np.array(cols)
       cached_inputs[hdf.filename] = mat
@@ -258,20 +251,30 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour, norma
       y = cached_outputs[hdf.filename]
     else:
       bids = hdf['bid'][:]
-      y = bids[future_offset_ticks:] > bids[:-future_offset_ticks]
+      y = bids[future_offset:] > bids[:-future_offset]
       y = y[max_aggregator_window_size + max_lag:]
       cached_outputs[hdf.filename] = y
     outputs.append(y)
-    print "%d, feature shape: %s, output shape: %s" % (i, mat.shape, y.shape)
+    #print "%d, feature shape: %s, output shape: %s" % (i, mat.shape, y.shape)
   
   inputs = np.hstack(inputs).T
   outputs = np.concatenate(outputs)
   return inputs, outputs, normalizers 
   
 def common_features(hdfs):
-  feature_set = set(hdfs[0].attrs['features'])
-  for hdf in hdfs[1:]:
-    feature_set = feature_set.intersection(set(hdf.attrs['features']))
+  
+  feature_set = None 
+  for hdf in hdfs:
+    curr_set = set(hdf.attrs['features'])
+    if feature_set is None:
+      feature_set = curr_set
+    else:
+      feature_set = feature_set.intersection(curr_set)
+  for feature_name in feature_set:
+    vec = hdf[feature_name]
+    if np.all(vec == vec[0]):
+      print "Skipping feature %s since it's constant %s" % (feature_name, vec[0])
+      feature_set.remove(feature_name)
   return feature_set 
 
 # affects only future self, no time travel but watch for self improvement
@@ -281,16 +284,12 @@ def common_features(hdfs):
 # ...to do archival research for him. And a little bit of divination and/or
 # creative writing. 
 def eval_new_param(bucket, hdf_keys, old_params, new_param, 
-    num_training_days = 16, start_hour = 3, end_hour = 7, future_offset = 30):
+    num_training_days = 16, start_hour = 3, end_hour = 7, future_offset = 300):
   if new_param in old_params:
     return None
 
   n_files = len(hdf_keys)
   print "Downloading all HDFs..."
-  #import multiprocessing
-  #pool = multiprocessing.Pool(10)
-  cloud.config.num_procs = 20
-  cloud.config.commit()
   
   hdfs = []
   if True:
@@ -330,11 +329,11 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
       x_test, y_test, _ = \
         construct_dataset([test_hdf], params, future_offset, start_hour, end_hour, normalizers)
       print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
-      print "Training model..."
+      # print "Training model..."
 
       model = LogisticRegression()
       model.fit(x_train, y_train)
-      print "Generating predictions"
+      # print "Generating predictions"
       pred = model.predict(x_test)
       acc = np.mean(pred == y_test)
       print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
@@ -342,6 +341,7 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
     med_acc = np.median(acc)
     print "Median accuracy: %s" % med_acc
     result[param] = med_acc
+  print result 
   return result
     
 def launch_jobs(hdf_bucket, hdf_keys, raw_features = None, 
@@ -351,10 +351,11 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
   #  hdf = cloud_helpers.download_hdf_from_s3(hdf_bucket, hdf_keys[0])
   #  raw_features = hdf.attrs['features']
   #print "Raw features", raw_features
+  
   all_params = gen_feature_params(raw_features)
   print "Launching %d jobs" % len(all_params)
   old_chosen_params = []
-  label = 'Evaluating %d features' % len(all_params)
+  label = 'Evaluating %d parameter sets' % len(all_params)
   def do_work(p):
     return eval_new_param(hdf_bucket, hdf_keys, old_chosen_params, p, 
       num_training_days = num_training_days, 
