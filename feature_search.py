@@ -330,15 +330,21 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
         construct_dataset([test_hdf], params, future_offset, start_hour, end_hour, normalizers)
       print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
       # print "Training model..."
-
-      model = LogisticRegression()
-      model.fit(x_train, y_train)
-      # print "Generating predictions"
-      pred = model.predict(x_test)
-      acc = np.mean(pred == y_test)
-      print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
-      accs.append(acc)
-    med_acc = np.median(acc)
+      if np.all(np.isfinite(x_train)) and np.all(np.isfinite(x_test)) and \
+          np.all(np.isfinite(y_train)) and np.all(np.isfinite(y_test)):
+        model = LogisticRegression()
+        model.fit(x_train, y_train)
+        # print "Generating predictions"
+        pred = model.predict(x_test)
+        acc = np.mean(pred == y_test)
+        print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
+        accs.append(acc)
+      else:
+        print "Skipping test #%s of %s due to NaN or infinity in data" %  (test_idx, param)
+    if len(accs) > 0:
+      med_acc = np.median(accs)
+    else:
+      med_acc = None
     print "Median accuracy: %s" % med_acc
     result[param] = med_acc
   print result 
@@ -373,6 +379,7 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
   best_param = None
   results = {}
   for (i, result) in enumerate(cloud.iresult(jids)):
+    print "Received result #%d: %s" % (i, result)
     # result can be 
     #  (1) None (if param was involid)
     #  (2) a single accuracy (if single parameter was sent)
