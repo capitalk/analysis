@@ -96,7 +96,7 @@ FeatureParams = namedtuple('FeatureParams',
   ('raw_feature', 
   'aggregator', 
   'aggregator_window_size', 
-  'normalizer', 
+  #'normalizer', 
   'past_lag',
   'transform'))
   
@@ -124,7 +124,7 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [10, 100, 1000], 
-     'normalizer': [None,  ZScore], # ZScore, LaplaceScore
+     #'normalizer': [None,  ZScore], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
@@ -134,81 +134,9 @@ def gen_feature_params(raw_features=None):
   def filter(x):
     return (x.past_lag and x.past_lag < x.aggregator_window_size)
   return all_param_combinations(options, filter = filter)
-
-
-
-def extract_feature(hdf, param,  normalizer = None):
-  """
-  Get the raw feature from the HDF and then:
-    (1) apply the rolling aggregator over the raw data
-    (2) normalize the data
-    (3) optionally transform the data
-    (4) optionally get the percent change from some point in the past
-  """
-  x = hdf[param.raw_feature][:]
-  n = len(x)
-  #print "original", x[:-20]
-  
-  x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
-  #print "rolling", x[:-20]
-  
-  assert len(x) == n - param.aggregator_window_size  
-  
-  if param.transform: x = param.transform(x)
-  #print "transform", x[:-20]
-  
-  
-  lag = param.past_lag
-  if lag:  
-    past = x[:-lag]
-    present = x[lag:]
-    x = (present - past) #/ past
-  
-  #print "diff", x[:-20]
-  
-  if normalizer:
-    N = normalizer
-  elif param.normalizer:
-    N = param.normalizer()
-    N.fit(x)
-  else:
-    N = None     
-  
-  if N: 
-    x = N.transform(x)
-  #print "normalized", x[:-20]
-  return x, N
-
-def fit_normalizers(hdfs, features):
-  #print "[fit_normalizers]", hdfs, features
-  normalizers = []
-  num_files = len(hdfs)
-  half = int(math.ceil(num_files / 2.0))
-  assert half > 0
-  
-  for (i, f) in enumerate(features):
-    #print (i,f)
-    if f.normalizer is None:
-      normalizers.append(None)
-    else:
-      # only use first half of dataset for estimating normalizer params
-      # so we don't overfit by normalization
-      data = []
-      for hdf in hdfs[:half]:
-        #print hdf
-        col, _ = extract_feature(hdf, copy_params(f, normalizer=None))
-        data.append(col)
-      #print data  
-      data = np.concatenate(data)
-      #print data 
-      N = f.normalizer()
-      N.fit(data)
-      normalizers.append(N)
-  return normalizers 
   
 def construct_dataset(hdfs, features, future_offset, 
-     start_hour = 3, end_hour = 7,
-     normalizers = None, cached_inputs = {}, cached_outputs = {}):
+     start_hour = 3, end_hour = 7, cached_inputs = {}, cached_outputs = {}):
   inputs = []
   outputs = []
   print "[construct_dataset] Future_offset = %s" % future_offset
@@ -219,34 +147,46 @@ def construct_dataset(hdfs, features, future_offset,
   
   max_lag = max(all_lags)
   max_aggregator_window_size = max(all_aggregator_window_sizes)
-  
-  # TODO: Actually use start_hour and end_hour 
-  if normalizers is None:
-    normalizers = fit_normalizers(hdfs, features)
-  
-  for (i, hdf) in enumerate(hdfs):
+
+  for  hdf in hdfs:
     if hdf.filename in cached_inputs:
       mat = cached_inputs[hdf.filename]
     else: 
       cols = []
       # construct all the columns for a subset of rows
-      for (i, f) in enumerate(features):
-        N = normalizers[i]
-        col, _ = extract_feature(hdf, f, N)
+      for param in features:
+        """
+        Get the raw feature from the HDF and then:
+          (1) apply the rolling aggregator over the raw data
+          (2) normalize the data
+          (3) optionally transform the data
+          (4) optionally get the percent change from some point in the past
+        """
+        x = hdf[param.raw_feature][:]
+        n = len(x)
+        x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
+        assert len(x) == n - param.aggregator_window_size  
+
+        if param.transform: x = param.transform(x)
+        lag = param.past_lag
+        if lag:  
+          past = x[:-lag]
+          present = x[lag:]
+          x = (present - past) 
+        
         #print "Original column length for %s: %d" % (f, len(col))
         # remove last future_offset ticks, since we have no output for them
-        col = col[:-future_offset]
+        x = x[:-future_offset]
         # skip some of the past if it's also seen by the feature with max. lag
         amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
-        col = col[amt_lag_trim:]
+        x = x[amt_lag_trim:]
         
         # if you're being aggregated in smaller windows than some other feature
         # then you should snip off some of your starting samples 
         amt_agg_window_trim = max_aggregator_window_size - \
           (0 if f.aggregator_window_size is None else f.aggregator_window_size)
-        col = col[amt_agg_window_trim:]
-        #print "Final column length for %s : %d" % (f, len(col))
-        cols.append(col)
+        x = x[amt_agg_window_trim:]
+        cols.append(x)
       mat = np.array(cols)
       cached_inputs[hdf.filename] = mat
     
@@ -263,7 +203,7 @@ def construct_dataset(hdfs, features, future_offset,
     
   inputs = np.hstack(inputs).T
   outputs = np.concatenate(outputs)
-  return inputs, outputs, normalizers 
+  return inputs, outputs
   
 def common_features(hdfs):
   feature_set = None 
@@ -286,83 +226,88 @@ def common_features(hdfs):
 # To shed further light on this situation Timir should probably hire Sarah. 
 # ...to do archival research for him. And a little bit of divination and/or
 # creative writing. 
-def eval_new_param(bucket, hdf_keys, old_params, new_param, 
+def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param, 
     num_training_days = 16, start_hour = 3, end_hour = 7, future_offset = 300):
   if new_param in old_params:
     return None
 
-  n_files = len(hdf_keys)
-  print "Downloading all HDFs..."
+  n_train = len(training_keys)
+  n_test = len(testing_keys)
+  print "Downloading %d training HDFs..." % n_train
+  training_hdfs = []
+  def download(k):
+    cloud_helpers.download_file_from_s3(bucket, k) 
+  for filename in cloud.mp.iresult(cloud.mp.map(download, training_keys)):
+    training_hdfs.append(h5py.File(filename))
   
-  hdfs = []
-  if True:
-    jids = cloud.mp.map(lambda k: cloud_helpers.download_file_from_s3(bucket, k), hdf_keys)
-    for (i, filename) in enumerate(cloud.mp.iresult(jids, num_in_parallel = 10)):
-      print "Done downloading file #%d: %s" % (i, filename)
-      hdf = h5py.File(filename)
-      hdfs.append(hdf)
-  else:
-    for k in hdf_keys:
-      print "Downloading %s:%s" % (bucket, k)
-      hdf = cloud_helpers.download_hdf_from_s3(bucket, k)
-      hdfs.append(hdf)
+  print "Downloading %d testing HDFs..." % n_test
+  testing_hdfs = [] 
+  for filename in cloud.mp.iresult(cloud.mp.map(download, testing_keys)):
+    testing_hdfs.append(h5py.File(filename))
       
   if new_param.raw_feature is None:
-    raw_features = common_features(hdfs)
+    raw_features = common_features(training_hdfs)
+  elif isinstance(new_param.raw_feature, list):
+    raw_features = new_param.raw_feature
   else:
-    raw_features = [new_param.feature]
+    raw_features = [new_param.raw_feature]
   print "Raw features: ", raw_features
   result = {}
   for raw_feature in raw_features:
     param = copy_params(new_param, raw_feature = raw_feature)
     print param
     params = old_params + [param]
-    accs = []
-    for test_idx in np.arange(n_files)[num_training_days:]:
-      training_hdfs = hdfs[(test_idx - num_training_days):test_idx]
-      test_hdf = hdfs[test_idx]
-      print "Constructing dataset for %d / %d (test_filename = %s)" % \
-        (test_idx, n_files, test_hdf.filename)
-      x_train, y_train, normalizers = \
-        construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour, None)
-      x_test, y_test, _ = \
-        construct_dataset([test_hdf], params, future_offset, start_hour, end_hour, normalizers)
-      print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
-      # print "Training model..."
-      if np.all(np.isfinite(x_train)) and np.all(np.isfinite(x_test)) and \
-          np.all(np.isfinite(y_train)) and np.all(np.isfinite(y_test)):
-        model = LogisticRegression()
-        model.fit(x_train, y_train)
-        # print "Generating predictions"
-        pred = model.predict(x_test)
-        acc = np.mean(pred == y_test)
-        print "Accuracy for %d / %d = %s" % (test_idx, n_files, acc)
-        accs.append(acc)
-      else:
-        print "Skipping test #%s of %s due to NaN or infinity in data" %  (test_idx, param)
-    if len(accs) > 0:
-      med_acc = np.median(accs)
+    x_train, y_train = \
+      construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
+    x_test, y_test = \
+      construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
+    print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+    # print "Training model..."
+    if np.all(np.isfinite(x_train)):
+      x_train_ok = True
     else:
-      med_acc = None
-    print "Median accuracy: %s" % med_acc
-    result[param] = med_acc
+      x_train_ok = False
+      print "Training data contains NaN or infinity"
+    if np.all(np.isfinite(x_test)):
+      x_test_ok = True
+    else:
+      x_test_ok = False
+      print "Testing data contains NaN or infinity"
+    if np.all(np.isfinite(x_test)):
+      y_test_ok = True
+    else:
+      y_test_ok = False
+      print "Testing label contains NaN or infinity"
+    if np.all(np.isfinite(x_test)):
+      y_train_ok = True
+    else:
+      y_train_ok = False
+      print "Testing label contains NaN or infinity"
+    if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
+      model = LogisticRegression()
+      model.fit(x_train, y_train)
+      pred = model.predict(x_test)
+      acc = np.mean(pred == y_test)
+      print "Accuracy: %s" % acc
+    else:
+      print "Skipping %s due to bad data" % param 
+      acc = None
+    result[param] = acc
   print result 
   return result
     
-def launch_jobs(hdf_bucket, hdf_keys, raw_features = None, 
-    num_training_days = 16, start_hour = 3, end_hour = 7, run_local = False):
-  #if raw_features is None:
-  #  print "Downloading ", hdf_keys[0]
-  #  hdf = cloud_helpers.download_hdf_from_s3(hdf_bucket, hdf_keys[0])
-  #  raw_features = hdf.attrs['features']
-  #print "Raw features", raw_features
-  
+def launch_jobs(hdf_bucket, training_keys, testing_keys, 
+    raw_features = None, num_training_days = 16, start_hour = 3, end_hour = 7, 
+    run_local = False):
   all_params = gen_feature_params(raw_features)
-  print "Launching %d jobs" % len(all_params)
+  print "Launching %d jobs over %d training files and %d testing files" %  \
+    (len(all_params), len(training_keys), len(testing_keys))
   old_chosen_params = []
   label = 'Evaluating %d parameter sets' % len(all_params)
   def do_work(p):
-    return eval_new_param(hdf_bucket, hdf_keys, old_chosen_params, p, 
+    return eval_new_param(hdf_bucket, training_keys, testing_keys,
+      old_chosen_params, 
+      p, 
       num_training_days = num_training_days, 
       start_hour = start_hour, 
       end_hour = end_hour)
@@ -401,14 +346,21 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
 #   features = None
 #   for k in key_names: 
      
-def single_feature_search(pattern, num_training_days, start_hour, end_hour, run_local):
-  bucket, key_pattern = cloud_helpers.parse_bucket_and_pattern(pattern)
-  if len(key_pattern) == 0:
-    key_pattern = '*'
-  key_names = cloud_helpers.get_matching_key_names(bucket, key_pattern)
-  #raw_features = get_common_features(bucket, key_names)
-  #print "Raw features:", raw_features
-  return launch_jobs(bucket, key_names, raw_features = None, 
+def single_feature_search(training_pattern, testing_pattern, 
+    num_training_days, start_hour, end_hour, run_local):
+  training_bucket, training_pattern = \
+    cloud_helpers.parse_bucket_and_pattern(training_pattern)
+  if len(training_pattern) == 0:
+    training_pattern = '*'
+  testing_bucket, testing_pattern = \
+    cloud_helpers.parse_bucket_and_pattern(testing_pattern)
+  if len(testing_pattern) == 0:
+    testing_pattern = '*'
+  assert training_bucket == testing_bucket 
+  training_names = cloud_helpers.get_matching_key_names(training_bucket, training_pattern)
+  testing_names = cloud_helpers.get_matching_key_names(testing_bucket, testing_pattern)
+  return launch_jobs(training_bucket, training_names, testing_names, 
+    raw_features = None, 
     num_training_days = num_training_days, 
     start_hour = start_hour, 
     end_hour = end_hour, 
@@ -417,8 +369,10 @@ def single_feature_search(pattern, num_training_days, start_hour, end_hour, run_
 
 from argparse import ArgumentParser 
 parser = ArgumentParser(description='Look for single best feature')
-parser.add_argument('pattern', metavar='P', type=str,
+parser.add_argument('train', type=str, dest='training_pattern',
                        help='s3://capk-bucket/some-hdf-pattern')
+parser.add_argument('test', type=str, dest='testing_pattern',
+                        help='s3://capk-bucket/some-hdf-pattern')
 parser.add_argument('--run-local', dest="run_local", 
   action="store_true", default=False)
 parser.add_argument('--num-training-days', 
@@ -433,8 +387,8 @@ if __name__ == '__main__':
   assert args.pattern 
   assert len(args.pattern) > 0
   best_acc, best_param, worst_acc, worst_param, results = \
-    single_feature_search(args.pattern, args.num_training_days, 
-    args.start_hour, args.end_hour, args.run_local)
+    single_feature_search(args.training_pattern, args.testing_pattern,  
+      args.num_training_days, args.start_hour, args.end_hour, args.run_local)
   print results
   print "Worst param: %s, accuracy = %s" % (worst_param, worst_acc)
   print "Best param: %s, accuracy = %s" % (best_param, best_acc)
