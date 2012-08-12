@@ -12,8 +12,6 @@ import pandas
 import scipy
 import scipy.stats
 
-
-  
 class ZScore:
   def __init__(self):
     self.mean = None 
@@ -102,12 +100,18 @@ FeatureParams = namedtuple('FeatureParams',
   'past_lag',
   'transform'))
   
+def copy_params(old_params, **kwds):
+  param_args = {}
+  for k in FeatureParams._fields:
+    v = kwds[k] if k in kwds else getattr(old_params, k)
+    param_args[k] = v
+  return FeatureParams(**param_args)
+  
 def all_param_combinations(options, filter=lambda x: False):
   import itertools
   combinations = [x for x in apply(itertools.product, options.values())]
   params =[FeatureParams(**dict(zip(options.keys(), p))) for p in combinations]
   return [p for p in params if not filter(p)]
-  
   
 def gen_feature_params(raw_features=None):
   # raw_features is None means that each worker should figure out the common
@@ -147,11 +151,17 @@ def extract_feature(hdf, param,  normalizer = None):
   """
   x = hdf[param.raw_feature][:]
   n = len(x)
-  #print "original", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:] 
   x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
-  #print "agg", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
   
   assert len(x) == n - param.aggregator_window_size  
+  
+  if param.transform: x = param.transform(x)
+  
+  lag = param.past_lag
+  if lag:  
+    past = x[:-lag]
+    present = x[lag:]
+    x = (present - past) #/ past
   
   if normalizer:
     N = normalizer
@@ -161,18 +171,8 @@ def extract_feature(hdf, param,  normalizer = None):
   else:
     N = None     
   
-  if N: x = N.transform(x)
-  #print "normalized", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
-  
-  if param.transform: x = param.transform(x)
-  #print "transformed", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
-  
-  lag = param.past_lag
-  if lag:  
-    past = x[:-lag]
-    present = x[lag:]
-    x = (present - past) #/ past
-  #print "lag", np.sum(x== 0),  len(x) - np.sum(np.isfinite(x)), x[-20:]
+  if N: 
+    x = N.transform(x)
   return x, N
 
 def fit_normalizers(hdfs, features):
@@ -184,13 +184,11 @@ def fit_normalizers(hdfs, features):
     if f.normalizer is None:
       normalizers.append(None)
     else:
-        # only use first half of dataset for estimating normalizer params
-        # so we don't overfit by normalization
+      # only use first half of dataset for estimating normalizer params
+      # so we don't overfit by normalization
       data = []
       for hdf in hdfs[:half]:
-        col = hdf[f.raw_feature][:]
-        if param.aggregator:
-          col = rolling_fn(col, param.aggregator_window_size, param.aggregator)
+        col = extract_feature(hdf, copy_params(f, normalizer=None))
         data.append(col)
       data = np.concatenate(data)
       N = f.normalizer()
@@ -258,7 +256,6 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour,
   return inputs, outputs, normalizers 
   
 def common_features(hdfs):
-  
   feature_set = None 
   for hdf in hdfs:
     curr_set = set(hdf.attrs['features'])
@@ -307,12 +304,7 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
   print "Raw features: ", raw_features
   result = {}
   for raw_feature in raw_features:
-    param = FeatureParams(raw_feature = raw_feature, 
-      aggregator = new_param.aggregator, 
-      aggregator_window_size = new_param.aggregator_window_size, 
-      normalizer = new_param.normalizer, 
-      past_lag = new_param.past_lag, 
-      transform = new_param.transform)
+    param = copy_params(new_param, raw_feature = raw_feature)
     print param
     params = old_params + [param]
     accs = []
