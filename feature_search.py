@@ -387,7 +387,7 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
     if result is None:
       result = {}
     else:
-      assert isinstance(result, dict):
+      assert isinstance(result, dict)
     for (param, acc) in result.items():
       results[param]  = acc
       if acc and acc > best_acc:
