@@ -333,7 +333,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     else:
       assert isinstance(result, dict)
     for (param, acc) in result.items():
-      print param acc
+      print param, acc
       results[param]  = acc
       if acc and acc > best_acc:
         best_acc = acc
