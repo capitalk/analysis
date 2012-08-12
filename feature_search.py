@@ -370,9 +370,9 @@ def single_feature_search(training_pattern, testing_pattern,
 
 from argparse import ArgumentParser 
 parser = ArgumentParser(description='Look for single best feature')
-parser.add_argument('--train', type=str, dest='training_pattern',
+parser.add_argument('--train', type=str, dest='training_pattern', required=True,
                        help='s3://capk-bucket/some-hdf-pattern')
-parser.add_argument('--test', type=str, dest='testing_pattern',
+parser.add_argument('--test', type=str, dest='testing_pattern', required=True, 
                         help='s3://capk-bucket/some-hdf-pattern')
 parser.add_argument('--run-local', dest="run_local", 
   action="store_true", default=False)
@@ -385,8 +385,8 @@ parser.add_argument('--end-hour', type = int, default = 7, dest="end_hour")
 
 if __name__ == '__main__':
   args = parser.parse_args()
-  assert args.pattern 
-  assert len(args.pattern) > 0
+  #assert args.pattern 
+  #assert len(args.pattern) > 0
   best_acc, best_param, worst_acc, worst_param, results = \
     single_feature_search(args.training_pattern, args.testing_pattern,  
      args.start_hour, args.end_hour, args.run_local)
