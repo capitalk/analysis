@@ -288,8 +288,10 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       model = LogisticRegression()
       model.fit(x_train, y_train)
       pred = model.predict(x_test)
+      nz = np.sum(pred == 0)
+      nnz = np.sum(pred == 1)
       acc = np.mean(pred == y_test)
-      print "Accuracy:", acc
+      print "nz = %d, nnz = %d, accuracy = %s" % (nz, nnz, acc)
     else:
       print "Skipping due to bad data", param 
       acc = None
