@@ -377,9 +377,8 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
   best_acc = 0
   best_param = None
   results = {}
-  import itertools
   for result in cloud.iresult(jids):
-    print "Received result #%d: %s" % (i, result)
+    print "Received result", result 
     # result can be 
     #  (1) None (if param was involid)
     #  (2) a single accuracy (if single parameter was sent)
