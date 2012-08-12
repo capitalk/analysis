@@ -7,20 +7,12 @@ import math
 import cloud
 import cloud_helpers 
 import h5py 
+from agg import mad, crossing_rate, rolling_fn 
+import pandas
+import scipy
+import scipy.stats
 
-def mad(x):
-  """median absolute deviation from the sample median"""
-  return np.median(np.abs(x - np.median(x)))
 
-def crossing_rate(x):
-  """# of times the series crosses its own initial value / length of series"""
-  init = x[0]
-  gt = x > init
-  lt = x <= init
-  moves_down = gt[:-1] & lt[1:]
-  moves_up = lt[:-1] & gt[1:]
-  n_crosses = np.sum(moves_down) + np.sum(moves_up)
-  return n_crosses / float(len(x))
   
 class ZScore:
   def __init__(self):
@@ -42,7 +34,7 @@ class LaplaceScore:
   def fit(self, x):
     m = np.median(x)
     self.median = m
-    self.mad = np.median(np.abs(x - m))
+    self.mad = np.mean(np.abs(x - m))
   
   def transform(self, x):
     return (x - self.median) / self.mad
@@ -53,8 +45,10 @@ class RescaleExtrema:
     self.max = None
   
   def fit(self, x):
-    self.min = np.min(x)
-    self.range = np.max(x) - self.min
+    low = scipy.stats.scoreatpercentile(x, 10)
+    high = scipy.stats.scoreatpercentile(x, 90)
+    self.min = low
+    self.range = high - low 
     
   def transform(self, x):
     return (x - self.min) / self.range
@@ -141,9 +135,23 @@ def gen_feature_params(raw_features=None):
       (x.normalizer is not None and x.past_lag is not None)
   return all_param_combinations(options, filter = filter)
 
+
+
 def extract_feature(hdf, param,  normalizer = None):
+  """
+  Get the raw feature from the HDF and then:
+    (1) apply the rolling aggregator over the raw data
+    (2) normalize the data
+    (3) optionally transform the data
+    (4) optionally get the percent change from some point in the past
+  """
   x = hdf[param.raw_feature][:]
   n = len(x)
+  #print "original", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:] 
+  x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
+  #print "agg", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
+  
+  assert len(x) == n - param.aggregator_window_size  
   
   if normalizer:
     N = normalizer
@@ -151,34 +159,21 @@ def extract_feature(hdf, param,  normalizer = None):
     N = param.normalizer()
     N.fit(x)
   else:
-    N = None 
-    
-  if N:
-    x = N.transform(x)
-    
-  # window size is in seconds, but each tick is 100ms
-  w = param.aggregator_window_size
-  n_agg = n - w
-  aggregated = np.zeros(n_agg)
-  agg_fn = param.aggregator
-  for i in xrange(len(aggregated)):
-    aggregated[i] = agg_fn(x[i:i+w])
+    N = None     
+  
+  if N: x = N.transform(x)
+  #print "normalized", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
+  
+  if param.transform: x = param.transform(x)
+  #print "transformed", np.sum(x== 0), len(x) - np.sum(np.isfinite(x)), x[-20:]
   
   lag = param.past_lag
-  if not lag:
-    lagged = aggregated
-  
-  else:
-    future = aggregated[lag:]
-    present  = aggregated[:-lag]
-    diff = future - present
-    lagged = 100 * diff / present 
-    
-  if param.transform:
-    result = param.transform(lagged)
-  else:
-    result = lagged
-  return result, N
+  if lag:  
+    past = x[:-lag]
+    present = x[lag:]
+    x = (present - past) #/ past
+  #print "lag", np.sum(x== 0),  len(x) - np.sum(np.isfinite(x)), x[-20:]
+  return x, N
 
 def fit_normalizers(hdfs, features):
   normalizers = []
@@ -193,8 +188,9 @@ def fit_normalizers(hdfs, features):
         # so we don't overfit by normalization
       data = []
       for hdf in hdfs[:half]:
-        print "[fit_normalizers]", hdf, f
         col = hdf[f.raw_feature][:]
+        if param.aggregator:
+          col = rolling_fn(col, param.aggregator_window_size, param.aggregator)
         data.append(col)
       data = np.concatenate(data)
       N = f.normalizer()
@@ -323,7 +319,8 @@ def eval_new_param(bucket, hdf_keys, old_params, new_param,
     for test_idx in np.arange(n_files)[num_training_days:]:
       training_hdfs = hdfs[(test_idx - num_training_days):test_idx]
       test_hdf = hdfs[test_idx]
-      print "Constructing dataset for %d / %d" % (test_idx, n_files)
+      print "Constructing dataset for %d / %d (test_filename = %s)" % \
+        (test_idx, n_files, test_hdf.filename)
       x_train, y_train, normalizers = \
         construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour, None)
       x_test, y_test, _ = \
