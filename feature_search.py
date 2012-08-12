@@ -227,7 +227,7 @@ def common_features(hdfs):
 # ...to do archival research for him. And a little bit of divination and/or
 # creative writing. 
 def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param, 
-    num_training_days = 16, start_hour = 3, end_hour = 7, future_offset = 300):
+    start_hour = 3, end_hour = 7, future_offset = 300):
   if new_param in old_params:
     return None
 
@@ -297,7 +297,7 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
   return result
     
 def launch_jobs(hdf_bucket, training_keys, testing_keys, 
-    raw_features = None, num_training_days = 16, start_hour = 3, end_hour = 7, 
+    raw_features = None, start_hour = 3, end_hour = 7, 
     run_local = False):
   all_params = gen_feature_params(raw_features)
   print "Launching %d jobs over %d training files and %d testing files" %  \
@@ -307,8 +307,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
   def do_work(p):
     return eval_new_param(hdf_bucket, training_keys, testing_keys,
       old_chosen_params, 
-      p, 
-      num_training_days = num_training_days, 
+      p,  
       start_hour = start_hour, 
       end_hour = end_hour)
   mapper = cloud.mp.map if run_local else cloud.map 
@@ -350,7 +349,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
 #   for k in key_names: 
      
 def single_feature_search(training_pattern, testing_pattern, 
-    num_training_days, start_hour, end_hour, run_local):
+    start_hour, end_hour, run_local):
   training_bucket, training_pattern = \
     cloud_helpers.parse_bucket_and_pattern(training_pattern)
   if len(training_pattern) == 0:
@@ -364,7 +363,6 @@ def single_feature_search(training_pattern, testing_pattern,
   testing_names = cloud_helpers.get_matching_key_names(testing_bucket, testing_pattern)
   return launch_jobs(training_bucket, training_names, testing_names, 
     raw_features = None, 
-    num_training_days = num_training_days, 
     start_hour = start_hour, 
     end_hour = end_hour, 
     run_local = run_local)
@@ -378,8 +376,8 @@ parser.add_argument('test', type=str, dest='testing_pattern',
                         help='s3://capk-bucket/some-hdf-pattern')
 parser.add_argument('--run-local', dest="run_local", 
   action="store_true", default=False)
-parser.add_argument('--num-training-days', 
-  dest='num_training_days', type = int, default=16)
+#parser.add_argument('--num-training-days', 
+#  dest='num_training_days', type = int, default=16)
 parser.add_argument('--start-hour', type = int, default = 3, dest="start_hour")
 parser.add_argument('--end-hour', type = int, default = 7, dest="end_hour")
 #parser.add_argument('--min-duration', dest='min_dur', type=int, default=None, 
@@ -391,7 +389,7 @@ if __name__ == '__main__':
   assert len(args.pattern) > 0
   best_acc, best_param, worst_acc, worst_param, results = \
     single_feature_search(args.training_pattern, args.testing_pattern,  
-      args.num_training_days, args.start_hour, args.end_hour, args.run_local)
+     args.start_hour, args.end_hour, args.run_local)
   print results
   print "Worst param: %s, accuracy = %s" % (worst_param, worst_acc)
   print "Best param: %s, accuracy = %s" % (best_param, best_acc)
