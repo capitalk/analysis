@@ -139,7 +139,7 @@ def construct_dataset(hdfs, features, future_offset,
      start_hour = 3, end_hour = 7, cached_inputs = {}, cached_outputs = {}):
   inputs = []
   outputs = []
-  print "[construct_dataset] Future_offset = %s" % future_offset
+  # print "[construct_dataset] Future_offset = %s" % future_offset
   
   all_lags = [0] + [f.past_lag for f in features if f.past_lag is not None]
   all_aggregator_window_sizes = [0] + \
@@ -258,15 +258,20 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
     raw_features = [new_param.raw_feature]
   print "Raw features: ", raw_features
   result = {}
+  last_train = None
   for raw_feature in raw_features:
     param = copy_params(new_param, raw_feature = raw_feature)
     print param
     params = old_params + [param]
     x_train, y_train = \
       construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
+    assert last_train is None or np.any(last_train != x_train)
+    last_train = x_train 
+    
     x_test, y_test = \
       construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
-    print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+    
+    # print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
     # print "Training model..."
     if np.all(np.isfinite(x_train)):
       x_train_ok = True
@@ -293,9 +298,9 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       model.fit(x_train, y_train)
       pred = model.predict(x_test)
       acc = np.mean(pred == y_test)
-      print "Accuracy: %s" % acc
+      print "Accuracy:", acc
     else:
-      print "Skipping %s due to bad data" % param 
+      print "Skipping due to bad data", param 
       acc = None
     result[param] = acc
   print result 
