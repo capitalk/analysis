@@ -56,11 +56,11 @@ def rolling_fn(x, w, fn):
   if builtin:
     aggregated = builtin(x, w, min_periods = w)
   elif fn == mad:
-    medians = pandas.rolling_median(x, w, min_periods = w)
+    medians = pandas.rolling_median(x, w)
     abs_diffs = np.abs(x - medians)
-    aggregated = pandas.rolling_mean(abs_diffs, w, min_periods = w)
+    aggregated = pandas.rolling_mean(abs_diffs, w)
   elif fn == crossing_rate:
     aggregated = rolling_crossing_rate(x,w)
   else:
-    aggregated = pandas.rolling_apply(x, w, fn, min_periods = w)
+    aggregated = pandas.rolling_apply(x, w, fn)
   return aggregated[w:]

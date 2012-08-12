@@ -120,7 +120,7 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    'aggregator' : [np.median, mad, crossing_rate],
+    'aggregator' : [np.median, np.std, crossing_rate],
      
      # window sizes in seconds
      'aggregator_window_size' : [10, 100, 1000], 
@@ -129,7 +129,7 @@ def gen_feature_params(raw_features=None):
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
     
-     'transform' : [None, np.square], 
+     'transform' : [None], 
   }
   def filter(x):
     return (x.past_lag and x.past_lag < x.aggregator_window_size)
