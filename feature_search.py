@@ -43,8 +43,8 @@ class RescaleExtrema:
     self.max = None
   
   def fit(self, x):
-    low = scipy.stats.scoreatpercentile(x, 10)
-    high = scipy.stats.scoreatpercentile(x, 90)
+    low = np.min(x)
+    high = np.max(x)
     self.min = low
     self.range = high - low 
     
@@ -120,23 +120,19 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    
-    'aggregator' : [np.median, mad, crossing_rate], #[np.median]
+    'aggregator' : [np.median, mad, crossing_rate],
      
      # window sizes in seconds
-     'aggregator_window_size' : [10, 100, 1000], # [10],
-     'normalizer': [None, ZScore, LaplaceScore], #[LaplaceScore]
-
+     'aggregator_window_size' : [10, 100, 1000], 
+     'normalizer': [None,  ZScore], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
-     'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], #[None], #[
+     'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
     
-     'transform' : [None, np.square], # [np.square], #
+     'transform' : [None, np.square], 
   }
   def filter(x):
-    return \
-      (x.past_lag and x.past_lag < x.aggregator_window_size) or \
-      (x.normalizer is not None and x.past_lag is not None)
+    return (x.past_lag and x.past_lag < x.aggregator_window_size)
   return all_param_combinations(options, filter = filter)
 
 
@@ -151,17 +147,24 @@ def extract_feature(hdf, param,  normalizer = None):
   """
   x = hdf[param.raw_feature][:]
   n = len(x)
+  #print "original", x[:-20]
+  
   x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
+  #print "rolling", x[:-20]
   
   assert len(x) == n - param.aggregator_window_size  
   
   if param.transform: x = param.transform(x)
+  #print "transform", x[:-20]
+  
   
   lag = param.past_lag
   if lag:  
     past = x[:-lag]
     present = x[lag:]
     x = (present - past) #/ past
+  
+  #print "diff", x[:-20]
   
   if normalizer:
     N = normalizer
@@ -173,14 +176,18 @@ def extract_feature(hdf, param,  normalizer = None):
   
   if N: 
     x = N.transform(x)
+  #print "normalized", x[:-20]
   return x, N
 
 def fit_normalizers(hdfs, features):
+  #print "[fit_normalizers]", hdfs, features
   normalizers = []
   num_files = len(hdfs)
   half = int(math.ceil(num_files / 2.0))
+  assert half > 0
   
   for (i, f) in enumerate(features):
+    #print (i,f)
     if f.normalizer is None:
       normalizers.append(None)
     else:
@@ -188,15 +195,19 @@ def fit_normalizers(hdfs, features):
       # so we don't overfit by normalization
       data = []
       for hdf in hdfs[:half]:
-        col = extract_feature(hdf, copy_params(f, normalizer=None))
+        #print hdf
+        col, _ = extract_feature(hdf, copy_params(f, normalizer=None))
         data.append(col)
+      #print data  
       data = np.concatenate(data)
+      #print data 
       N = f.normalizer()
       N.fit(data)
       normalizers.append(N)
   return normalizers 
   
-def construct_dataset(hdfs, features, future_offset, start_hour, end_hour,
+def construct_dataset(hdfs, features, future_offset, 
+     start_hour = 3, end_hour = 7,
      normalizers = None, cached_inputs = {}, cached_outputs = {}):
   inputs = []
   outputs = []
@@ -249,8 +260,7 @@ def construct_dataset(hdfs, features, future_offset, start_hour, end_hour,
       y = y[max_aggregator_window_size + max_lag:]
       cached_outputs[hdf.filename] = y
     outputs.append(y)
-    #print "%d, feature shape: %s, output shape: %s" % (i, mat.shape, y.shape)
-  
+    
   inputs = np.hstack(inputs).T
   outputs = np.concatenate(outputs)
   return inputs, outputs, normalizers 
