@@ -377,7 +377,8 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
   best_acc = 0
   best_param = None
   results = {}
-  for (i, result) in enumerate(cloud.iresult(jids)):
+  import itertools
+  for result in cloud.iresult(jids):
     print "Received result #%d: %s" % (i, result)
     # result can be 
     #  (1) None (if param was involid)
@@ -385,16 +386,16 @@ def launch_jobs(hdf_bucket, hdf_keys, raw_features = None,
     #  (3) a dictionary mapping parameters to accuracies 
     if result is None:
       result = {}
-    elif not isinstance(result, dict):
-      result = {all_params[i]: result}
+    else:
+      assert isinstance(result, dict):
     for (param, acc) in result.items():
       results[param]  = acc
       if acc and acc > best_acc:
         best_acc = acc
-        best_param = all_params[i]
+        best_param = param
       elif acc and acc < worst_acc:
         worst_acc = acc
-        worst_param = all_params[i]
+        worst_param = param
   return best_acc, best_param, worst_acc, worst_param, results
 
 #def get_common_features(bucket, key_names):
