@@ -236,14 +236,19 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
   print "Downloading %d training HDFs..." % n_train
   training_hdfs = []
   def download(k):
-    cloud_helpers.download_file_from_s3(bucket, k) 
+    return cloud_helpers.download_file_from_s3(bucket, k) 
+    
   for filename in cloud.mp.iresult(cloud.mp.map(download, training_keys)):
-    training_hdfs.append(h5py.File(filename))
+    print "Downloaded training file", filename
+    hdf = h5py.File(filename)
+    training_hdfs.append(hdf)
   
   print "Downloading %d testing HDFs..." % n_test
   testing_hdfs = [] 
   for filename in cloud.mp.iresult(cloud.mp.map(download, testing_keys)):
-    testing_hdfs.append(h5py.File(filename))
+    print "Downloaded testing file", filename
+    hdf = h5py.File(filename)
+    testing_hdfs.append(hdf)
       
   if new_param.raw_feature is None:
     raw_features = common_features(training_hdfs)
