@@ -136,7 +136,7 @@ def gen_feature_params(raw_features=None):
   return all_param_combinations(options, filter = filter)
   
 def construct_dataset(hdfs, features, future_offset, 
-     start_hour = 3, end_hour = 7, cached_inputs = {}, cached_outputs = {}):
+     start_hour = 3, end_hour = 7):
   inputs = []
   outputs = []
   # print "[construct_dataset] Future_offset = %s" % future_offset
@@ -149,56 +149,47 @@ def construct_dataset(hdfs, features, future_offset,
   max_aggregator_window_size = max(all_aggregator_window_sizes)
 
   for  hdf in hdfs:
-    if hdf.filename in cached_inputs:
-      mat = cached_inputs[hdf.filename]
-    else: 
-      cols = []
-      # construct all the columns for a subset of rows
-      for param in features:
-        """
-        Get the raw feature from the HDF and then:
-          (1) apply the rolling aggregator over the raw data
-          (2) normalize the data
-          (3) optionally transform the data
-          (4) optionally get the percent change from some point in the past
-        """
-        x = hdf[param.raw_feature][:]
-        n = len(x)
-        x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
-        assert len(x) == n - param.aggregator_window_size  
+    cols = []
+    # construct all the columns for a subset of rows
+    for param in features:
+      """
+      Get the raw feature from the HDF and then:
+        (1) apply the rolling aggregator over the raw data
+        (2) normalize the data
+        (3) optionally transform the data
+        (4) optionally get the percent change from some point in the past
+      """
+      x = hdf[param.raw_feature][:]
+      n = len(x)
+      x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
+      assert len(x) == n - param.aggregator_window_size  
 
-        if param.transform: x = param.transform(x)
-        lag = param.past_lag
-        if lag:  
-          past = x[:-lag]
-          present = x[lag:]
-          x = (present - past) 
-        
-        #print "Original column length for %s: %d" % (f, len(col))
-        # remove last future_offset ticks, since we have no output for them
-        x = x[:-future_offset]
-        # skip some of the past if it's also seen by the feature with max. lag
-        amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
-        x = x[amt_lag_trim:]
-        
-        # if you're being aggregated in smaller windows than some other feature
-        # then you should snip off some of your starting samples 
-        amt_agg_window_trim = max_aggregator_window_size - \
-          (0 if f.aggregator_window_size is None else f.aggregator_window_size)
-        x = x[amt_agg_window_trim:]
-        cols.append(x)
-      mat = np.array(cols)
-      cached_inputs[hdf.filename] = mat
-    
+      if param.transform: x = param.transform(x)
+      lag = param.past_lag
+      if lag:  
+        past = x[:-lag]
+        present = x[lag:]
+        x = (present - past) 
+      
+      #print "Original column length for %s: %d" % (f, len(col))
+      # remove last future_offset ticks, since we have no output for them
+      x = x[:-future_offset]
+      # skip some of the past if it's also seen by the feature with max. lag
+      amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
+      x = x[amt_lag_trim:]
+      
+      # if you're being aggregated in smaller windows than some other feature
+      # then you should snip off some of your starting samples 
+      amt_agg_window_trim = max_aggregator_window_size - \
+        (0 if f.aggregator_window_size is None else f.aggregator_window_size)
+      x = x[amt_agg_window_trim:]
+      cols.append(x)
+    mat = np.array(cols) 
     inputs.append(mat)
     # signal is: will the bid go up in some number of seconds
-    if hdf.filename in cached_outputs:
-      y = cached_outputs[hdf.filename]
-    else:
-      bids = hdf['bid'][:]
-      y = bids[future_offset:] > bids[:-future_offset]
-      y = y[max_aggregator_window_size + max_lag:]
-      cached_outputs[hdf.filename] = y
+    bids = hdf['bid'][:]
+    y = bids[future_offset:] > bids[:-future_offset]
+    y = y[max_aggregator_window_size + max_lag:]
     outputs.append(y)
     
   inputs = np.hstack(inputs).T
