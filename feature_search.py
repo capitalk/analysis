@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import LinearSVC
 from sklearn.linear_model import LogisticRegression 
+from sklearn.tree import DecisionTreeClassifier 
 import math 
 import cloud
 import cloud_helpers 
@@ -282,7 +283,7 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       x_test, y_test = \
         construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
     
-      # print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+      print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
       # print "Training model..."
       if np.all(np.isfinite(x_train)):
         x_train_ok = True
@@ -305,7 +306,12 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
         y_train_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        model = LogisticRegression()
+        # if we just have one variable find best top and bottom thresholds
+        #if x_train.shape[1] == 1:
+        #  model = UnivariateThresholder()
+        #else:
+        #  model = LogisticRegression()
+        model = DecisionTreeClassifier(max_depth = 3)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
         nz = np.sum(pred == 0)
@@ -313,9 +319,11 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
         acc = np.mean(pred == y_test)
         print "nz = %d, nnz = %d, accuracy = %s" % (nz, nnz, acc)
         result[param] = acc
+        print 
       else:
         print "Skipping due to bad data", param 
         result[param] = None
+        print 
   print result 
   return result
     
