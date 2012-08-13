@@ -125,13 +125,13 @@ def construct_dataset(hdfs, features, future_offset,
       # skip some of the past if it's also seen by the feature with max. lag
       
       amt_lag_trim = max_lag - (0 if param.past_lag is None else param.past_lag)
-      print max_lag, param.past_lag, amt_lag_trim
+      #print max_lag, param.past_lag, amt_lag_trim
       x = x[amt_lag_trim:]
       # if you're being aggregated in smaller windows than some other feature
       # then you should snip off some of your starting samples 
       amt_agg_window_trim = max_aggregator_window_size - \
         (0 if param.aggregator_window_size is None else param.aggregator_window_size)
-      print max_aggregator_window_size, param.aggregator_window_size, amt_agg_window_trim
+      #print max_aggregator_window_size, param.aggregator_window_size, amt_agg_window_trim
       x = x[amt_agg_window_trim:]
       cols.append(x)
     shapes = [c.shape for c in cols]
@@ -143,7 +143,8 @@ def construct_dataset(hdfs, features, future_offset,
     assert np.all(np.isfinite(mat))
     inputs.append(mat)
   total_lag = max_aggregator_window_size + max_lag
-  X = np.hstack(inputs)
+  X = np.hstack(inputs).T
+  print "Final shape", X.shape
   return X, total_lag 
 
 def construct_outputs(hdfs, future_offset, lag = 0):
@@ -255,8 +256,8 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_test_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        #model = LogisticRegression()
-        model = DecisionTreeClassifier(max_depth = 5)  
+        model = LogisticRegression()
+        #model = DecisionTreeClassifier(max_depth = 5)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
         n_neg = np.sum(pred <= 0)
