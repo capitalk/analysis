@@ -44,9 +44,6 @@ def all_param_combinations(options, filter=lambda x: False):
   combinations = [x for x in apply(itertools.product, options.values())]
   params =[FeatureParams(**dict(zip(options.keys(), p))) for p in combinations]
   return [p for p in params if not filter(p)]
-
-def xor_none(x,y):
-  return (x is None and y is not None) or (x is not None and y is None)
   
 def gen_feature_params(raw_features=None):
   # raw_features is None means that each worker should figure out the common
@@ -59,11 +56,10 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [None, 10, 100], 
-     'normalizer': [ZScore], # ZScore, LaplaceScore
+     'normalizer': [ZScore], # [ZScore, LaplaceScore]
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
-    
      'transform' : [None], 
   }
   def filter(x):
@@ -83,7 +79,7 @@ def construct_dataset(hdfs, features, future_offset,
      [(f.aggregator_window_size if f.aggregator_window_size else 0) \
       for f in features]
   
-  max_aggregator_window_size = max( all_aggregator_window_sizes)
+  max_aggregator_window_size = max(all_aggregator_window_sizes)
   
   for  hdf in hdfs:
     cols = []
@@ -154,8 +150,10 @@ def construct_outputs(hdfs, future_offset, lag = 0):
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][:]
     offers = hdf['offer'][:]
-    midprice = (bids+offers)/2.0
-    y = np.sign(midprice[future_offset:] - midprice[:-future_offset])
+
+    y = np.zeros(len(bids), dtype='int')
+    y[bids[future_offset:] > offers[:-future_offset]] = 1
+    y[offers[future_offset:] < bids[:-future_offset]] = -1 
     y = y[lag:]
     assert np.all(np.isfinite(y))
     outputs.append(y)
@@ -257,20 +255,36 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_test_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        model = SGDClassifier(loss = 'log')
+        model = SGDClassifier(loss = 'log', n_jobs = -1)
         #model = LogisticRegression()
-        #model = DecisionTreeClassifier(max_depth = 5)  
+        
+        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
         model.fit(x_train, y_train)
+        
         pred = model.predict(x_test)
-        n_neg = np.sum(pred <= 0)
-        n_pos = np.sum(pred > 0)
-        acc = np.mean( (pred <= 0) & (y_test <= 0))
-        print "train neg = %d, pos = %d" % (np.sum(y_train <=0), np.sum(y_train > 0))
-        print "test  neg = %d, pos = %d" % (np.sum(y_test <= 0), np.sum(y_test > 0))
-        print "pred  neg = %d, pos = %d" % (n_neg, n_pos)
-        print "accuracy =", acc
+        
+        correct = pred == y_test
+        
+        pred_up = pred > 0
+        pred_down = pred < 0
+        pred_nz = pred_up | pred_down
+        test_nz = y_test != 0 
+        correct_nz = correct & pred_nz
+        num_correct_nz = np.sum(correct_nz) 
+        precision = num_correct_nz / float(np.sum(pred_nz))
+        recall = num_correct_nz / float(np.sum(test_nz))
+        score = 2 * (precision * recall) / (precision + recall)
+        print "train zero = %d, neg = %d, pos = %d" % \
+         (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
+        print "test  zero = %d, neg = %d, pos = %d" % \
+          (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
+        print "pred  zero = %d, neg = %d, pos = %d" % \
+          (np.sum(pred == 0), np.sum(pred_down), np.sum(pred_up))
+        print "precision =", precision 
+        print "recall =", recall 
+        print "score =", score
           
-        result[param] = acc
+        result[param] = score
         print 
       else:
         print "Skipping due to bad data", param 
@@ -285,7 +299,7 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
 # ...to do archival research for him. And a little bit of divination and/or
 # creative writing. 
 def download_and_eval(bucket, training_keys, testing_keys, old_params, new_param, 
-    start_hour = 3, end_hour = 7, future_offset = 300):
+    start_hour = 3, end_hour = 7, future_offset = 450):
  
   n_train = len(training_keys)
   n_test = len(testing_keys)
@@ -324,9 +338,9 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
       end_hour = end_hour)
   
   for feature_num in xrange(num_features):
-    worst_acc = 1
+    worst_score = 1
     worst_param = None 
-    best_acc = 0
+    best_score = 0
     best_param = None
     print "=== Searching for feature #%d ===" % (feature_num+1)
     print "Launching %d jobs over %d training files and %d testing files" %  \
@@ -346,21 +360,21 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
         result = {}
       else:
         assert isinstance(result, dict)
-      for (param, acc) in result.items():
-        print param, acc
-        results[tuple(chosen_params + [param])]  = acc
-        if acc and acc > best_acc:
-          best_acc = acc
+      for (param, score) in result.items():
+        print param, score
+        results[tuple(chosen_params + [param])]  = score
+        if score and score > best_score:
+          best_score = score
           best_param = param
-        elif acc and acc < worst_acc:
-          worst_acc = acc
+        elif score and score < worst_score:
+          worst_score = score
           worst_param = param
-    print "Current worst after result #%d for feature #%d: %s, acc = %s" % \
-      (i, feature_num, worst_param, worst_acc)
-    print "Current best after result #%d for feature #%d: %s, acc = %s" % \
-      (i, feature_num, best_param, best_acc)
+    print "Current worst after result #%d for feature #%d: %s, score = %s" % \
+      (i, feature_num, worst_param, worst_score)
+    print "Current best after result #%d for feature #%d: %s, score = %s" % \
+      (i, feature_num, best_param, best_score)
     chosen_params.append(best_param)
-  return chosen_params, best_acc, worst_acc, worst_param, results
+  return chosen_params, best_score, worst_score, worst_param, results
 
      
 def collect_keys_and_launch(training_pattern, testing_pattern, 
@@ -416,10 +430,10 @@ if __name__ == '__main__':
   args = parser.parse_args()
   #assert args.pattern 
   #assert len(args.pattern) > 0
-  best_acc, best_param, worst_acc, worst_param, results = \
+  best_score, best_param, worst_score, worst_param, results = \
     collect_keys_and_launch(args.training_pattern, args.testing_pattern,  
      args.start_hour, args.end_hour,  args.num_features)
   print results
-  print "Worst param: %s, accuracy = %s" % (worst_param, worst_acc)
-  print "Best param: %s, accuracy = %s" % (best_param, best_acc)
+  print "Worst param: %s, score = %s" % (worst_param, worst_score)
+  print "Best param: %s, score = %s" % (best_param, best_score)
   
