@@ -45,7 +45,7 @@ def rolling_crossing_rate(x, w):
   return result
   
 def rolling_fn(x, w, fn):
-  print "Applying rolling fn %s with window size %d" % (fn, w)
+  #print "Applying rolling fn %s with window size %d" % (fn, w)
   builtin = {
     np.mean: pandas.rolling_mean, 
     np.median: pandas.rolling_median, 
@@ -64,5 +64,7 @@ def rolling_fn(x, w, fn):
     aggregated = rolling_crossing_rate(x,w)
   else:
     aggregated = pandas.rolling_apply(x, w, fn)
-  print "[rolling_fn] Number bad entries:", np.sum(~np.isfinite(aggregated[w:]))
+  n_bad = np.sum(~np.isfinite(aggregated[w:]))
+  if n_bad > 0:
+    print "[rolling_fn] Number bad entries:", n_bad
   return aggregated[w:]
