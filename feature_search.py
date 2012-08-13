@@ -81,8 +81,6 @@ def construct_dataset(hdfs, features, future_offset,
      [f.aggregator_window_size for f in features if f.aggregator_window_size is not None]
   
   max_aggregator_window_size = max([0] + all_aggregator_window_sizes)
-  print "max_lag", max_lag
-  print "max_agg_window", max_aggregator_window_size
   for  hdf in hdfs:
     cols = []
     # construct all the columns for a subset of rows
