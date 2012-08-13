@@ -273,9 +273,8 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         num_correct_nz = np.sum(correct_nz) 
         precision = num_correct_nz / float(np.sum(pred_nz))
         recall = num_correct_nz / float(np.sum(test_nz))
-        beta = 0.25
+        beta = 0.1
         score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
-        # score = 2 * (precision * recall) / (precision + recall)
         print "train zero = %d, neg = %d, pos = %d" % \
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
         print "test  zero = %d, neg = %d, pos = %d" % \
@@ -347,6 +346,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     print "=== Searching for feature #%d ===" % (feature_num+1)
     print "Launching %d jobs over %d training files and %d testing files" %  \
       (len(all_possible_params), len(training_keys), len(testing_keys))
+    
     label = 'Evaluating %d parameter sets for feature #%d' % \
       (len(all_possible_params), feature_num+1)
 
@@ -372,9 +372,9 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
           worst_score = score
           worst_param = param
     print "Current worst after result #%d for feature #%d: %s, score = %s" % \
-      (i, feature_num, worst_param, worst_score)
+      (i + 1, feature_num + 1, worst_param, worst_score)
     print "Current best after result #%d for feature #%d: %s, score = %s" % \
-      (i, feature_num, best_param, best_score)
+      (i + 1, feature_num + 1, best_param, best_score)
     chosen_params.append(best_param)
   return chosen_params, best_score, worst_score, worst_param, results
 
