@@ -94,7 +94,7 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    'aggregator' : [np.median, np.std, crossing_rate],
+    'aggregator' : [np.mean, np.median, np.std, crossing_rate],
      
      # window sizes in seconds
      'aggregator_window_size' : [10, 100, 1000], 
@@ -272,8 +272,8 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       params = old_params + [param]
       x_train, y_train = \
         construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
-      assert last_train is None or np.any(last_train != x_train), \
-        "Got identical data as last iteration for " + raw_feature
+      if last_train is not None and np.all(last_train == x_train):
+        "WARNING: Got identical data as last iteration for " + raw_feature
       x_train, normalizers = normalize_data(x_train, params = params)
       assert normalizers is not None
       last_train = x_train 
