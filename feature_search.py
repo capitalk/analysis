@@ -97,7 +97,7 @@ FeatureParams = namedtuple('FeatureParams',
   ('raw_feature', 
   'aggregator', 
   'aggregator_window_size', 
-  #'normalizer', 
+  'normalizer', 
   'past_lag',
   'transform'))
   
