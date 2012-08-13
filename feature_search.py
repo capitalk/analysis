@@ -151,11 +151,11 @@ def construct_outputs(hdfs, future_offset, lag = 0):
     bids = hdf['bid'][:]
     offers = hdf['offer'][:]
 
-    y = np.zeros(len(bids), dtype='int')
+    y = np.zeros(len(bids) - future_offset, dtype='int')
     y[bids[future_offset:] > offers[:-future_offset]] = 1
     y[offers[future_offset:] < bids[:-future_offset]] = -1 
-    y = y[lag:]
     assert np.all(np.isfinite(y))
+    y = y[lag:]
     outputs.append(y)
   return np.concatenate(outputs)
   
