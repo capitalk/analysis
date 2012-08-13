@@ -376,6 +376,9 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     print "Current best after result #%d for feature #%d: %s, score = %s" % \
       (i + 1, feature_num + 1, best_param, best_score)
     chosen_params.append(best_param)
+    print
+    print chosen_params
+    print
   return chosen_params, best_score, worst_score, worst_param, results
 
      
