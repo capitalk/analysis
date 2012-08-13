@@ -4,6 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import LinearSVC
 from sklearn.linear_model import LogisticRegression 
 from sklearn.tree import DecisionTreeClassifier 
+from sklearn.linear_model import SGDClassifier
 import math 
 import cloud
 import cloud_helpers 
@@ -58,7 +59,7 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [None, 10, 100], 
-     'normalizer': [None], # ZScore, LaplaceScore
+     'normalizer': [ZScore], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
@@ -256,7 +257,8 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_test_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        model = LogisticRegression()
+        model = SGDClassifier(loss = 'log')
+        #model = LogisticRegression()
         #model = DecisionTreeClassifier(max_depth = 5)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
