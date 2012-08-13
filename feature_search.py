@@ -54,7 +54,7 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    'aggregator' : [None, np.mean, np.std], #, crossing_rate],
+    'aggregator' : [None, np.mean], #, crossing_rate],
      
      # window sizes in seconds
      'aggregator_window_size' : [None, 100], 
@@ -67,7 +67,8 @@ def gen_feature_params(raw_features=None):
   }
   def filter(x):
     return (x.past_lag and x.past_lag < x.aggregator_window_size) or \
-      xor_none(x.aggregator, x.aggregator_window_size)
+     (x.aggregator is None and x.aggregator_window_size is not None) or \
+     (x.aggregator is not None and x.aggregator_window_size is None)
   return all_param_combinations(options, filter = filter)
   
 def construct_dataset(hdfs, features, future_offset, 
@@ -102,12 +103,12 @@ def construct_dataset(hdfs, features, future_offset,
         x /= float(x[-1])
       assert np.all(np.isfinite(x)), "Raw features %s contains bad data" % raw_feature
       #n = len(x)
-      w = param.aggregator_window_size
-      x = rolling_fn(x, w, param.aggregator)[w:]
-      assert np.all(np.isfinite(x)), \
-        "Got bad data from rolling aggregator %s (win size = %d)" %\
-           (param.aggregator, param.aggregator_window_size) 
-
+      if param.aggregator:
+        w = param.aggregator_window_size
+        x = rolling_fn(x, w, param.aggregator)[w:]
+        assert np.all(np.isfinite(x)), \
+          "Got bad data from rolling aggregator %s (win size = %d)" %\
+             (param.aggregator, param.aggregator_window_size) 
       if param.transform: x = param.transform(x)
       assert np.all(np.isfinite(x))
       lag = param.past_lag
