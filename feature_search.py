@@ -190,7 +190,7 @@ def construct_dataset(hdfs, features, future_offset,
 
 def normalize_data(x, params = None, normalizers = None):
   assert params or normalizers
-  cols = []
+  cols = np.zeros_like(x)
   if params is not None:
     normalizers = []
     for (i, p) in enumerate(params):
@@ -200,15 +200,14 @@ def normalize_data(x, params = None, normalizers = None):
         n = n()
         n.fit(x)
         col = n.transform(col)
-      cols.append(col)
+      cols[:, i] = col 
       normalizers.append(n)
-    return np.array(cols).T, normalizers
+    return cols, normalizers
   else:
-    for (i, n) in normalizers:
+    for (i, n) in enumerate(normalizers):
       col = x[:, i]
-      if n:
-        col = n.transform(col)
-      cols.append(col)
+      if n: col = n.transform(col)
+      cols[:, i] = col 
     return np.array(cols).T 
 def common_features(hdfs):
   feature_set = None 
