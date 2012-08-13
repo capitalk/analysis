@@ -318,12 +318,12 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
         #if x_train.shape[1] == 1:
         #  model = UnivariateThresholder()
         #else:
-        #  model = LogisticRegression()
-        model = DecisionTreeClassifier(max_depth = 2)  
+        model = LogisticRegression()
+        #model = DecisionTreeClassifier(max_depth = 3)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
         n_neg = np.sum(pred <= 0)
-        n_pos = np.sum(pred > 1)
+        n_pos = np.sum(pred > 0)
         acc = np.mean(pred == y_test)
         print "neg = %d, pos = %d, pred neg = %d, pred pos = %d, accuracy = %s" % \
           (np.sum(y_test <= 0), np.sum(y_test > 0), n_neg, n_pos, acc)
