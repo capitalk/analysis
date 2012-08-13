@@ -125,7 +125,7 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [10, 100, 1000], 
-     #'normalizer': [None,  ZScore], # ZScore, LaplaceScore
+     'normalizer': [None,  ZScore], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
@@ -214,7 +214,29 @@ def construct_dataset(hdfs, features, future_offset,
   inputs = np.hstack(inputs).T
   outputs = np.concatenate(outputs)
   return inputs, outputs
-  
+
+def normalize_data(x, params = None, normalizers = None):
+  assert params or normalizers
+  cols = []
+  if params:
+    normalizers = []
+    for (i, p) in enumerate(params):
+      col = x[:, i]
+      n = p.normalizer
+      if n:
+        n = n()
+        n.fit(x)
+        col = n.transform(col)
+      cols.append(col)
+      normalizers.append(n)
+  else:
+    for (i, n) in normalizers:
+      col = x[:, i]
+      if n:
+        col = n.transform(col)
+      cols.append(col)
+  return np.array(cols).T, normalizers
+
 def common_features(hdfs):
   feature_set = None 
   for hdf in hdfs:
@@ -279,12 +301,14 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       x_train, y_train = \
         construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
       assert last_train is None or np.any(last_train != x_train), \
-        "Got identical data between %s and %s" % (raw_feature, raw_features[i-1])
+        "Got identical data as last iteration for " + raw_feature
+      x_train, normalizers = normalize_data(x_train, params = params)
       last_train = x_train 
-    
       x_test, y_test = \
         construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
-    
+        
+      x_test, _ = normalize_data(x_test, normalizers = normalizers)
+      
       print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
       # print "Training model..."
       if np.all(np.isfinite(x_train)):

@@ -82,7 +82,7 @@ def rolling_fn(x, w, fn):
     np.max: pandas.rolling_max, 
     np.var: rolling_var, # not sure why I get NaN from pandas functions 
     np.std: rolling_std, 
-    crossing_rate: rolling_cross_rate, 
+    crossing_rate: rolling_crossing_rate, 
   }.get(fn, None)
   if builtin:
     aggregated = builtin(x, w)
