@@ -208,7 +208,8 @@ def normalize_data(x, params = None, normalizers = None):
       col = x[:, i]
       if n: col = n.transform(col)
       cols[:, i] = col 
-    return np.array(cols).T 
+    return cols
+     
 def common_features(hdfs):
   feature_set = None 
   for hdf in hdfs:
@@ -275,14 +276,16 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       if last_train is not None and np.all(last_train == x_train):
         "WARNING: Got identical data as last iteration for " + raw_feature
       x_train, normalizers = normalize_data(x_train, params = params)
+      print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+      
       assert normalizers is not None
       last_train = x_train 
       x_test, y_test = \
         construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
         
       x_test = normalize_data(x_test, normalizers = normalizers)
+      print "x_test shape: %s, y_test shape: %s" % (x_test.shape, y_test.shape)
       
-      print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
       # print "Training model..."
       if np.all(np.isfinite(x_train)):
         x_train_ok = True
