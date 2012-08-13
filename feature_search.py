@@ -190,6 +190,7 @@ def construct_dataset(hdfs, features, future_offset,
 
 def normalize_data(x, params = None, normalizers = None):
   assert params or normalizers
+  cols = []
   if params is not None:
     normalizers = []
     for (i, p) in enumerate(params):
