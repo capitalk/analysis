@@ -159,17 +159,30 @@ def construct_dataset(hdfs, features, future_offset,
         (3) optionally transform the data
         (4) optionally get the percent change from some point in the past
       """
-      x = hdf[param.raw_feature][:]
+      raw_feature = param.raw_feature
+      x = hdf[raw_feature][:]
+      assert np.all(np.isfinite(x))
+      if 'vol' in raw_feature:
+        x /= 10.0 ** 6
+      elif raw_feature == 't':
+        x /= float(x[-1])
+      assert np.all(np.isfinite(x)), "Raw features %s contains bad data" % raw_feature
       n = len(x)
       x = rolling_fn(x, param.aggregator_window_size, param.aggregator)
+      assert np.all(np.isfinite(x)), \
+        "Got bad data from rolling aggregator %s (win size = %d)" %\
+           (param.aggregator, param.aggregator_window_size)
       assert len(x) == n - param.aggregator_window_size  
 
       if param.transform: x = param.transform(x)
+      assert np.all(np.isfinite(x))
+      
       lag = param.past_lag
       if lag:  
         past = x[:-lag]
         present = x[lag:]
         x = (present - past) 
+      
       
       #print "Original column length for %s: %d" % (f, len(col))
       # remove last future_offset ticks, since we have no output for them
@@ -183,13 +196,16 @@ def construct_dataset(hdfs, features, future_offset,
       amt_agg_window_trim = max_aggregator_window_size - \
         (0 if f.aggregator_window_size is None else f.aggregator_window_size)
       x = x[amt_agg_window_trim:]
+      
       cols.append(x)
     mat = np.array(cols) 
+    assert np.all(np.isfinite(mat))
     inputs.append(mat)
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][:]
     y = bids[future_offset:] > bids[:-future_offset]
-    y = y[max_aggregator_window_size + max_lag:]
+    y = y[(max_aggregator_window_size + max_lag):]
+    assert np.all(np.isfinite(y))
     outputs.append(y)
     
   inputs = np.hstack(inputs).T
@@ -250,13 +266,14 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
   print "Raw features: ", raw_features
   result = {}
   last_train = None
-  for raw_feature in raw_features:
+  for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
     print param
     params = old_params + [param]
     x_train, y_train = \
       construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
-    assert last_train is None or np.any(last_train != x_train)
+    assert last_train is None or np.any(last_train != x_train), \
+      "Got identical data between %s and %s" % (raw_feature, raw_features[i-1])
     last_train = x_train 
     
     x_test, y_test = \
