@@ -235,9 +235,7 @@ def common_features(hdfs):
 # creative writing. 
 def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param, 
     start_hour = 3, end_hour = 7, future_offset = 300):
-  if new_param in old_params:
-    return None
-
+ 
   n_train = len(training_keys)
   n_test = len(testing_keys)
   print "Downloading %d training HDFs..." % n_train
@@ -268,51 +266,56 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
   last_train = None
   for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
+    
     print param
-    params = old_params + [param]
-    x_train, y_train = \
-      construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
-    assert last_train is None or np.any(last_train != x_train), \
-      "Got identical data between %s and %s" % (raw_feature, raw_features[i-1])
-    last_train = x_train 
+    if param in old_params:
+      print "...duplicate param in dataset, skipping"
+      result[param] = None
+    else:  
+      params = old_params + [param]
+      x_train, y_train = \
+        construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
+      assert last_train is None or np.any(last_train != x_train), \
+        "Got identical data between %s and %s" % (raw_feature, raw_features[i-1])
+      last_train = x_train 
     
-    x_test, y_test = \
-      construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
+      x_test, y_test = \
+        construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
     
-    # print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
-    # print "Training model..."
-    if np.all(np.isfinite(x_train)):
-      x_train_ok = True
-    else:
-      x_train_ok = False
-      print "Training data contains NaN or infinity"
-    if np.all(np.isfinite(x_test)):
-      x_test_ok = True
-    else:
-      x_test_ok = False
-      print "Testing data contains NaN or infinity"
-    if np.all(np.isfinite(x_test)):
-      y_test_ok = True
-    else:
-      y_test_ok = False
-      print "Testing label contains NaN or infinity"
-    if np.all(np.isfinite(x_test)):
-      y_train_ok = True
-    else:
-      y_train_ok = False
-      print "Testing label contains NaN or infinity"
-    if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-      model = LogisticRegression()
-      model.fit(x_train, y_train)
-      pred = model.predict(x_test)
-      nz = np.sum(pred == 0)
-      nnz = np.sum(pred == 1)
-      acc = np.mean(pred == y_test)
-      print "nz = %d, nnz = %d, accuracy = %s" % (nz, nnz, acc)
-    else:
-      print "Skipping due to bad data", param 
-      acc = None
-    result[param] = acc
+      # print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
+      # print "Training model..."
+      if np.all(np.isfinite(x_train)):
+        x_train_ok = True
+      else:
+        x_train_ok = False
+        print "Training data contains NaN or infinity"
+      if np.all(np.isfinite(x_test)):
+        x_test_ok = True
+      else:
+        x_test_ok = False
+        print "Testing data contains NaN or infinity"
+      if np.all(np.isfinite(x_test)):
+        y_test_ok = True
+      else:
+        y_test_ok = False
+        print "Testing label contains NaN or infinity"
+      if np.all(np.isfinite(x_test)):
+        y_train_ok = True
+      else:
+        y_train_ok = False
+        print "Testing label contains NaN or infinity"
+      if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
+        model = LogisticRegression()
+        model.fit(x_train, y_train)
+        pred = model.predict(x_test)
+        nz = np.sum(pred == 0)
+        nnz = np.sum(pred == 1)
+        acc = np.mean(pred == y_test)
+        print "nz = %d, nnz = %d, accuracy = %s" % (nz, nnz, acc)
+        result[param] = acc
+      else:
+        print "Skipping due to bad data", param 
+        result[param] = None
   print result 
   return result
     
