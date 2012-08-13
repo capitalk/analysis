@@ -58,7 +58,7 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [None, 10, 100], 
-     'normalizer': [None], # ZScore, LaplaceScore
+     'normalizer': [ZScore], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
