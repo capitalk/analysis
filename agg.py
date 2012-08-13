@@ -48,26 +48,26 @@ def rolling_crossing_rate(x, w):
 def rolling_var(x, w):
   x = np.asarray(x)
   assert isinstance(w, int)
+  means = pandas.rolling_mean(x, w)
   code = """
     int nx = Nx[0];
     double dw = (double) w; 
-  
+
     for (int i = 0; i <= nx -w; ++i) {
-      double sum = 0.0;
-      for (int j = i; j < i+w; ++j) {
-        sum += x[j];
-      }
-      double mean = sum / dw; 
+      int idx = i+w-1; 
+      double mean = means[idx];  
       double var_sum = 0.0;
       for (int j = i; j < i+w; ++j) {
         double diff = x[j] - mean;
         var_sum += diff * diff; 
       }
-      result[i+w-1] = var_sum / dw;
-    }
+      result[idx] = var_sum / dw;
+  }
     """
-  result = np.zeros(len(x))
-  scipy.weave.inline(code, ['x', 'w', 'result'], verbose=2)
+  n = len(x)
+  result = np.zeros(n)
+  if n > w:
+    scipy.weave.inline(code, ['x', 'w', 'means', 'result'], verbose=2)
   return result
 
 def rolling_std(x, w):
@@ -95,4 +95,4 @@ def rolling_fn(x, w, fn):
   n_bad = np.sum(~np.isfinite(aggregated[w:]))
   if n_bad > 0:
     print "[rolling_fn] Number bad entries:", n_bad
-  return aggregated[w:]
+  return aggregated
