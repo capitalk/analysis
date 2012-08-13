@@ -273,7 +273,9 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         num_correct_nz = np.sum(correct_nz) 
         precision = num_correct_nz / float(np.sum(pred_nz))
         recall = num_correct_nz / float(np.sum(test_nz))
-        score = 2 * (precision * recall) / (precision + recall)
+        beta = 0.25
+        score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
+        # score = 2 * (precision * recall) / (precision + recall)
         print "train zero = %d, neg = %d, pos = %d" % \
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
         print "test  zero = %d, neg = %d, pos = %d" % \
