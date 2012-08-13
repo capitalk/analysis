@@ -44,6 +44,35 @@ def rolling_crossing_rate(x, w):
   scipy.weave.inline(code, ['x', 'w', 'result'], verbose=2)
   return result
   
+
+def rolling_var(x, w):
+  x = np.asarray(x)
+  assert isinstance(w, int)
+  code = """
+    int nx = Nx[0];
+    double dw = (double) w; 
+  
+    for (int i = 0; i <= nx -w; ++i) {
+      double sum = 0.0;
+      for (int j = i; j < i+w; ++j) {
+        sum += x[j];
+      }
+      double mean = sum / dw; 
+      double var_sum = 0.0;
+      for (int j = i; j < i+w; ++j) {
+        double diff = x[j] - mean;
+        var_sum += diff * diff; 
+      }
+      result[i+w-1] = var_sum / dw;
+    }
+    """
+  result = np.zeros(len(x))
+  scipy.weave.inline(code, ['x', 'w', 'result'], verbose=2)
+  return result
+
+def rolling_std(x, w):
+  return np.sqrt(rolling_var(x,w))
+  
 def rolling_fn(x, w, fn):
   #print "Applying rolling fn %s with window size %d" % (fn, w)
   builtin = {
@@ -51,8 +80,9 @@ def rolling_fn(x, w, fn):
     np.median: pandas.rolling_median, 
     np.min: pandas.rolling_min, 
     np.max: pandas.rolling_max, 
-    np.var: pandas.rolling_var, 
-    np.std: pandas.rolling_std, 
+    np.var: rolling_var, # not sure why I get NaN from pandas functions 
+    np.std: rolling_std, 
+    crossing_rate: rolling_cross_rate, 
   }.get(fn, None)
   if builtin:
     aggregated = builtin(x, w)
@@ -60,8 +90,6 @@ def rolling_fn(x, w, fn):
     medians = pandas.rolling_median(x, w)
     abs_diffs = np.abs(x - medians)
     aggregated = pandas.rolling_mean(abs_diffs, w)
-  elif fn == crossing_rate:
-    aggregated = rolling_crossing_rate(x,w)
   else:
     aggregated = pandas.rolling_apply(x, w, fn)
   n_bad = np.sum(~np.isfinite(aggregated[w:]))
