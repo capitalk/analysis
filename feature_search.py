@@ -52,33 +52,6 @@ class RescaleExtrema:
   def transform(self, x):
     return (x - self.min) / self.range
 
-def random_subset_with_sequential_dependency(x, p):
-  """
-  We want to choose n*p of the total n elements in x, but
-  we want the probability of x[i] in S to be high if x[i-1]
-  is in x and low if x[i-1] is not in x. One way to do this is:
-    p(include x_i) = p^2 if x_(i-1) not included 
-                   -or- sqrt(p) if x_(i-1) was included
-    can we prove that the expectation is still p*n?    
-    
-  FROM EXPERIMENTS I SEE THAT THIS DOESN'T WORK--- WE GET TOO FEW
-  RESULTS BACK, SHOULD TRY SOMETHING ELSE!
-  """
-    
-  subset = []
-  # initial state is randomly set to include or exclude 
-  rand = np.random.rand
-  high_p = np.sqrt(p)
-  low_p = p**1.5
-  state = rand() < p
-  for (i, xi) in enumerate(x):
-    if state: 
-      subset.append(xi)
-      state = rand() < high_p
-    else:
-      state = rand() < low_p
-  return subset 
-
 def sqrt(x):
   return x * x
 
@@ -217,8 +190,7 @@ def construct_dataset(hdfs, features, future_offset,
 
 def normalize_data(x, params = None, normalizers = None):
   assert params or normalizers
-  cols = []
-  if params:
+  if params is not None:
     normalizers = []
     for (i, p) in enumerate(params):
       col = x[:, i]
@@ -229,14 +201,14 @@ def normalize_data(x, params = None, normalizers = None):
         col = n.transform(col)
       cols.append(col)
       normalizers.append(n)
+    return np.array(cols).T, normalizers
   else:
     for (i, n) in normalizers:
       col = x[:, i]
       if n:
         col = n.transform(col)
       cols.append(col)
-  return np.array(cols).T, normalizers
-
+    return np.array(cols).T 
 def common_features(hdfs):
   feature_set = None 
   for hdf in hdfs:
@@ -303,11 +275,12 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       assert last_train is None or np.any(last_train != x_train), \
         "Got identical data as last iteration for " + raw_feature
       x_train, normalizers = normalize_data(x_train, params = params)
+      assert normalizers is not None
       last_train = x_train 
       x_test, y_test = \
         construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
         
-      x_test, _ = normalize_data(x_test, normalizers = normalizers)
+      x_test = normalize_data(x_test, normalizers = normalizers)
       
       print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
       # print "Training model..."
