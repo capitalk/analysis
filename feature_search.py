@@ -57,8 +57,8 @@ def gen_feature_params(raw_features=None):
     'aggregator' : [None, np.mean], #, crossing_rate],
      
      # window sizes in seconds
-     'aggregator_window_size' : [None, 100], 
-     'normalizer': [ZScore], # ZScore, LaplaceScore
+     'aggregator_window_size' : [None, 10, 100], 
+     'normalizer': [None], # ZScore, LaplaceScore
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
      'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
@@ -75,16 +75,20 @@ def construct_dataset(hdfs, features, future_offset,
      start_hour = 3, end_hour = 7):
   inputs = []
 
-  all_lags =[f.past_lag for f in features if f.past_lag is not None]
-  max_lag = max([0] + all_lags)
-  all_aggregator_window_sizes = \
-     [f.aggregator_window_size for f in features if f.aggregator_window_size is not None]
+  all_lags =[(f.past_lag if f.past_lag else 0) for f in features] 
+  max_lag = max(all_lags)
   
-  max_aggregator_window_size = max([0] + all_aggregator_window_sizes)
+  all_aggregator_window_sizes = \
+     [(f.aggregator_window_size if f.aggregator_window_size else 0) \
+      for f in features]
+  
+  max_aggregator_window_size = max( all_aggregator_window_sizes)
+  
   for  hdf in hdfs:
     cols = []
     # construct all the columns for a subset of rows
     for param in features:
+      #print "--", param
       """
       Get the raw feature from the HDF and then:
         (1) apply the rolling aggregator over the raw data
@@ -119,19 +123,27 @@ def construct_dataset(hdfs, features, future_offset,
       x = x[:-future_offset]
       
       # skip some of the past if it's also seen by the feature with max. lag
-      amt_lag_trim = max_lag - (0 if f.past_lag is None else f.past_lag)
+      
+      amt_lag_trim = max_lag - (0 if param.past_lag is None else param.past_lag)
+      print max_lag, param.past_lag, amt_lag_trim
       x = x[amt_lag_trim:]
       # if you're being aggregated in smaller windows than some other feature
       # then you should snip off some of your starting samples 
       amt_agg_window_trim = max_aggregator_window_size - \
-        (0 if f.aggregator_window_size is None else f.aggregator_window_size)
+        (0 if param.aggregator_window_size is None else param.aggregator_window_size)
+      print max_aggregator_window_size, param.aggregator_window_size, amt_agg_window_trim
       x = x[amt_agg_window_trim:]
       cols.append(x)
+    shapes = [c.shape for c in cols]
+    #print "shapes", shapes
+    assert all([s == shapes[0] for s in shapes]), \
+      "Not all shapes the same: %s" % shapes
     mat = np.array(cols) 
+    #print "Final shape: ", mat.shape
     assert np.all(np.isfinite(mat))
     inputs.append(mat)
   total_lag = max_aggregator_window_size + max_lag
-  X = np.hstack(inputs).T
+  X = np.hstack(inputs)
   return X, total_lag 
 
 def construct_outputs(hdfs, future_offset, lag = 0):
@@ -198,7 +210,6 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
   y_test = None 
   for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
-
     print param
     if param in old_params:
       print "...duplicate param in dataset, skipping..."
@@ -245,12 +256,12 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
         #model = LogisticRegression()
-        model = DecisionTreeClassifier(max_depth = 3)  
+        model = DecisionTreeClassifier(max_depth = 5)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
         n_neg = np.sum(pred <= 0)
         n_pos = np.sum(pred > 0)
-        acc = np.mean(pred == y_test)
+        acc = np.mean( (pred <= 0) & (y_test <= 0))
         print "train neg = %d, pos = %d" % (np.sum(y_train <=0), np.sum(y_train > 0))
         print "test  neg = %d, pos = %d" % (np.sum(y_test <= 0), np.sum(y_test > 0))
         print "pred  neg = %d, pos = %d" % (n_neg, n_pos)
