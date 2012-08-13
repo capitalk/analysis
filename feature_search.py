@@ -255,10 +255,10 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_test_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        #model = SGDClassifier(loss = 'log')
+        model = SGDClassifier(loss = 'log', n_jobs = -1)
         #model = LogisticRegression()
         
-        model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
+        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
         model.fit(x_train, y_train)
         
         pred = model.predict(x_test)
