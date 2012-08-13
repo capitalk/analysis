@@ -204,7 +204,9 @@ def construct_dataset(hdfs, features, future_offset,
     inputs.append(mat)
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][:]
-    y = bids[future_offset:] > bids[:-future_offset]
+    offers = hdf['offer'][:]
+    midprice = (bids+offers)/2.0
+    y = np.sign(midprice[future_offset:] - midprice[:-future_offset])
     y = y[(max_aggregator_window_size + max_lag):]
     assert np.all(np.isfinite(y))
     outputs.append(y)
