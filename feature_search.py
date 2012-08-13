@@ -112,8 +112,7 @@ def gen_feature_params(raw_features=None):
 def construct_dataset(hdfs, features, future_offset, 
      start_hour = 3, end_hour = 7):
   inputs = []
-  outputs = []
-  # print "[construct_dataset] Future_offset = %s" % future_offset
+
   
   all_lags = [0] + [f.past_lag for f in features if f.past_lag is not None]
   all_aggregator_window_sizes = [0] + \
@@ -175,19 +174,21 @@ def construct_dataset(hdfs, features, future_offset,
     mat = np.array(cols) 
     assert np.all(np.isfinite(mat))
     inputs.append(mat)
+  return np.hstack(inputs).T, max_aggregator_window_size + max_lag
+
+def construct_outputs(hdfs, future_offset, lag = 0):
+  outputs = []
+  for hdf in hdfs:
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][:]
     offers = hdf['offer'][:]
     midprice = (bids+offers)/2.0
     y = np.sign(midprice[future_offset:] - midprice[:-future_offset])
-    y = y[(max_aggregator_window_size + max_lag):]
+    y = y[lag:]
     assert np.all(np.isfinite(y))
     outputs.append(y)
-    
-  inputs = np.hstack(inputs).T
-  outputs = np.concatenate(outputs)
-  return inputs, outputs
-
+  return np.concatenate(outputs)
+  
 def normalize_data(x, params = None, normalizers = None):
   assert params or normalizers
   cols = np.zeros_like(x)
@@ -262,6 +263,8 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
   print "Raw features: ", raw_features
   result = {}
   last_train = None
+  y_train = None
+  y_test = None 
   for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
     
@@ -271,8 +274,12 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       result[param] = None
     else:  
       params = old_params + [param]
-      x_train, y_train = \
+      x_train, lag = \
         construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
+      if y_train is None:
+        y_train = construct_outputs(training_hdfs, future_offset, lag)
+        y_test = construct_outputs(testing_hdfs, future_offset, lag)
+      
       if last_train is not None and np.all(last_train == x_train):
         "WARNING: Got identical data as last iteration for " + raw_feature
       x_train, normalizers = normalize_data(x_train, params = params)
@@ -280,9 +287,8 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
       
       assert normalizers is not None
       last_train = x_train 
-      x_test, y_test = \
+      x_test, _ = \
         construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
-        
       x_test = normalize_data(x_test, normalizers = normalizers)
       print "x_test shape: %s, y_test shape: %s" % (x_test.shape, y_test.shape)
       
@@ -313,13 +319,14 @@ def eval_new_param(bucket, training_keys, testing_keys, old_params, new_param,
         #  model = UnivariateThresholder()
         #else:
         #  model = LogisticRegression()
-        model = DecisionTreeClassifier(max_depth = 3)  
+        model = DecisionTreeClassifier(max_depth = 2)  
         model.fit(x_train, y_train)
         pred = model.predict(x_test)
-        nz = np.sum(pred == 0)
-        nnz = np.sum(pred == 1)
+        n_neg = np.sum(pred <= 0)
+        n_pos = np.sum(pred > 1)
         acc = np.mean(pred == y_test)
-        print "nz = %d, nnz = %d, accuracy = %s" % (nz, nnz, acc)
+        print "neg = %d, pos = %d, pred neg = %d, pred pos = %d, accuracy = %s" % \
+          (np.sum(y_test <= 0), np.sum(y_test > 0), n_neg, n_pos, acc)
         result[param] = acc
         print 
       else:
