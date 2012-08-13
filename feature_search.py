@@ -251,8 +251,11 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         n_neg = np.sum(pred <= 0)
         n_pos = np.sum(pred > 0)
         acc = np.mean(pred == y_test)
-        print "neg = %d, pos = %d, pred neg = %d, pred pos = %d, accuracy = %s" % \
-          (np.sum(y_test <= 0), np.sum(y_test > 0), n_neg, n_pos, acc)
+        print "train neg = %d, pos = %d" % (np.sum(y_train <=0), np.sum(y_train > 0))
+        print "test  neg = %d, pos = %d" % (np.sum(y_test <= 0), np.sum(y_test > 0))
+        print "pred  neg = %d, pos = %d" % (n_neg, n_pos)
+        print "accuracy =", acc
+          
         result[param] = acc
         print 
       else:
@@ -298,7 +301,6 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     num_features = 1):
   all_possible_params = gen_feature_params(raw_features)
 
-  label = 'Evaluating %d parameter sets' % len(all_possible_params)
   chosen_params = []
   def worker_wrapper(new_param):
     return download_and_eval(hdf_bucket, training_keys, testing_keys,
@@ -312,9 +314,11 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     worst_param = None 
     best_acc = 0
     best_param = None
-    print "=== Searching for feature #%d ===" % feature_num
+    print "=== Searching for feature #%d ===" % (feature_num+1)
     print "Launching %d jobs over %d training files and %d testing files" %  \
       (len(all_possible_params), len(training_keys), len(testing_keys))
+    label = 'Evaluating %d parameter sets for feature #%d' % \
+      (len(all_possible_params), feature_num+1)
 
     jids =\
       cloud.map(worker_wrapper, all_possible_params, 
