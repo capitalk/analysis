@@ -112,9 +112,7 @@ def construct_dataset(hdfs, features, future_offset,
       print "Skipping %s since it doesn't contain hours %d-%d" % \
       (hdf.filename, start_hour, end_hour)
       continue
-    else:
-      print "start idx = %d, end idx = %d" % (start_idx, end_idx)
-      
+    
     cols = []
     # construct all the columns for a subset of rows
     for param in features:
@@ -256,7 +254,7 @@ def score_trained_model(model, x, y, beta = 0.1):
   print "score =", score
   result = Result(zero = n_zero, neg = n_neg, pos = n_pos, 
     precision = precision, recall = recall, score = score, 
-    acc = np.mean(correct))
+    accuracy = np.mean(correct))
   return result
 
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
@@ -326,8 +324,8 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         
         print "Scoring training data"
         #model = RandomForestClassifier(n_estimators = 3)
-        n_iter = int(math.ceil(10.0**6 / x_train.shape[0]))
-        model = SGDClassifier(loss = 'log', n_iter = n_iter)
+        n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
+        model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
         model.fit(x_train, y_train)
         #model = LogisticRegression()
         #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
@@ -381,7 +379,7 @@ def download_and_eval(bucket, training_keys, testing_keys, old_params, new_param
     
 def launch_jobs(hdf_bucket, training_keys, testing_keys, 
     raw_features = None, start_hour = 3, end_hour = 7, 
-    num_features = 1):
+    num_features = 1, future_offset = 450):
   all_possible_params = gen_feature_params(raw_features)
 
   chosen_params = []
@@ -390,7 +388,8 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
       chosen_params, 
       new_param,  
       start_hour = start_hour, 
-      end_hour = end_hour)
+      end_hour = end_hour, 
+      future_offset = future_offset)
   
   for feature_num in xrange(num_features):
 
@@ -407,8 +406,8 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
         _label=label, 
         _type = 'f2')
     results = {}
-    best = {'params' : [], 'train_score' : 0,  'test_score': 0}
-    worst = {'params': [], 'train_score': 1, 'test_score': 1 }
+    best = None
+    worst = None 
     
     for (i, results) in enumerate(cloud.iresult(jids)):
       print "Received result:" 
@@ -426,18 +425,22 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
           print param
           print "result for training data:", train_result
           print "result for testing data:", test_result
-          print 
-          if train_result.score > best['train_score']:
+          print
+          score = train_result.score
+          
+          if best is None or not np.isfinite(best['train'].score) or \
+             best['train'].score <  score:
             best  = { 
-              'params':key, 
-              'train_score':train_result.score, 
-              'test_score': test_result.score
-            }
-          elif  train_result.score < worst['train_score']:
+                'params':key, 
+                'train': train_result,  
+                'test': test_result
+              }
+          elif worst is None or not np.isfinite(worst['train'].score) or \
+               worst['train'].score > score:
             worst = { 
               'params': key, 
-              'train_score': train_result.score,
-              'test_score': test_result.score
+              'train': train_result,
+              'test': test_result
             }
     print "Current worst after result #%d for feature #%d: %s" % \
       (i + 1, feature_num + 1, worst)
@@ -447,11 +450,11 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
     print
     print chosen_params
     print
-  return chosen_params, best, worst, results
+  return best, worst, results
 
      
 def collect_keys_and_launch(training_pattern, testing_pattern, 
-    start_hour = 3, end_hour = 7, num_features = 1):
+    start_hour = 3, end_hour = 7, num_features = 1, future_offset = 450):
   # if files are local then buckets are None
   # otherwise we expect HDFs to be on the same S3 bucket 
   
@@ -482,7 +485,8 @@ def collect_keys_and_launch(training_pattern, testing_pattern,
     raw_features = None, 
     start_hour = start_hour, 
     end_hour = end_hour, 
-    num_features = num_features)
+    num_features = num_features, 
+    future_offset = future_offset)
   
 
 from argparse import ArgumentParser 
@@ -498,15 +502,15 @@ parser.add_argument('--test', type=str, dest='testing_pattern', required=True,
 parser.add_argument('--start-hour', type = int, default = 3, dest="start_hour")
 parser.add_argument('--end-hour', type = int, default = 7, dest="end_hour")
 parser.add_argument('--num-features', type=int, default = 1, dest='num_features')
+parser.add_argument('--future-ticks', type=int, default = 450, dest='future_ticks')
 
 if __name__ == '__main__':
   args = parser.parse_args()
   #assert args.pattern 
   #assert len(args.pattern) > 0
-  best_score, best_param, worst_score, worst_param, results = \
+  best, worst, all_results = \
     collect_keys_and_launch(args.training_pattern, args.testing_pattern,  
      args.start_hour, args.end_hour,  args.num_features)
-  print results
-  print "Worst param: %s, score = %s" % (worst_param, worst_score)
-  print "Best param: %s, score = %s" % (best_param, best_score)
-  
+  print all_results
+  print "Worst: ", worst  
+  print "Best:", best
