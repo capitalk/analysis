@@ -320,22 +320,27 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         
         print "train zero = %d, neg = %d, pos = %d" % \
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
+        
+        print "Scoring training data"
+        model = RandomForestClassifier(n_estimators = 5)
+        #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
+        #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
+        #model = LogisticRegression()
+        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
+
+        model.fit(x_train, y_train)
+        
+        train_pred, train_result = score_trained_model(model, x_train, y_train)
+        assert len(train_pred) == len(y_train)
+        print train_result
+        print "---"
+        
+        print "Scoring testing data"
         print "test  zero = %d, neg = %d, pos = %d" % \
           (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
         
-        print "Scoring training data"
-        #model = RandomForestClassifier(n_estimators = 3)
-        #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
-        #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
-        #model.fit(x_train, y_train)
-        model = LogisticRegression()
-        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
-        
-        train_result = score_trained_model(model, x_train, y_train)
-        print train_result
-        print "---"
-        print "Scoring testing data"
-        test_result = score_trained_model(model, x_test, y_test)
+        test_pred, test_result = score_trained_model(model, x_test, y_test)
+        assert len(test_pred) == len(y_test)
         print test_result
         print
         results[param] = (train_result, test_result)
@@ -446,12 +451,11 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
             }
     print "Current worst after result #%d for feature #%d: %s" % \
       (i + 1, feature_num + 1, worst)
+    print 
     print "Current best after result #%d for feature #%d: %s" % \
       (i + 1, feature_num + 1, best)
+    print 
     chosen_params.append(best['params'][-1])
-    print
-    print chosen_params
-    print
   return best, worst, results
 
      
