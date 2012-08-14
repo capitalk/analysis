@@ -256,7 +256,7 @@ def score_trained_model(model, x, y, beta = 0.1):
     accuracy = np.mean(correct),
     precision = precision, recall = recall, score = score, 
   )
-  return result
+  return result, pred
 
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
   if new_param.raw_feature is None:
@@ -327,10 +327,9 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
         #model = LogisticRegression()
         model = DecisionTreeClassifier(max_depth = 3)  
-
         model.fit(x_train, y_train)
         
-        train_pred, train_result = score_trained_model(model, x_train, y_train)
+        train_result, train_pred = score_trained_model(model, x_train, y_train)
         assert len(train_pred) == len(y_train)
         print train_result
         print "---"
@@ -339,7 +338,7 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print "test  zero = %d, neg = %d, pos = %d" % \
           (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
         
-        test_pred, test_result = score_trained_model(model, x_test, y_test)
+        test_result, test_pred = score_trained_model(model, x_test, y_test)
         assert len(test_pred) == len(y_test)
         print test_result
         print
