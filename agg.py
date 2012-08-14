@@ -43,8 +43,27 @@ def rolling_crossing_rate(x, w):
   result = np.zeros(len(x))
   scipy.weave.inline(code, ['x', 'w', 'result'], verbose=2)
   return result
-  
 
+#def rolling_crossing_rate2(x, w):
+#  n = len(x)
+#  result = np.zeros(n)
+#  stop = n - w
+#  gt = np.zeros(w, dtype='bool')
+#  lte = np.zeros(w, dtype='bool')
+#  up = np.zeros(w-1, dtype='bool')
+#  down = np.zeros(w-1, dtype='bool')
+  
+#  for (i, xi) in enumerate(x[:stop]):
+#    idx = i + w
+#    window = x[i:idx]
+#    np.greater_equal(window, xi, out=gt)
+#    np.less(window, xi, out=lte)
+#    np.logical_and(gt[1:], lte[:-1], out=up)
+#    np.logical_and(gt[:-1], lte[1:], out=down)
+#    result[idx] = (np.sum(up) + np.sum(down))
+#  result /= float(w)
+#  return result 
+  
 def rolling_var(x, w):
   x = np.asarray(x)
   assert isinstance(w, int)
