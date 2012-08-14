@@ -34,7 +34,7 @@ FeatureParams = namedtuple('FeatureParams',
   'transform'))
 
 Result = namedtuple('Result', 
-  ('neg', 'zero', 'pos', 'precision', 'recall', 'score', 'accuracy'))
+  ('neg', 'zero', 'pos',  'accuracy', 'precision', 'recall', 'score'))
   
 def copy_params(old_params, **kwds):
   param_args = {}
@@ -253,8 +253,9 @@ def score_trained_model(model, x, y, beta = 0.1):
   print "recall =", recall 
   print "score =", score
   result = Result(zero = n_zero, neg = n_neg, pos = n_pos, 
+    accuracy = np.mean(correct),
     precision = precision, recall = recall, score = score, 
-    accuracy = np.mean(correct))
+  )
   return result
 
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
@@ -324,14 +325,15 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         
         print "Scoring training data"
         #model = RandomForestClassifier(n_estimators = 3)
-        n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
-        model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
-        model.fit(x_train, y_train)
-        #model = LogisticRegression()
+        #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
+        #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
+        #model.fit(x_train, y_train)
+        model = LogisticRegression()
         #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
         
         train_result = score_trained_model(model, x_train, y_train)
         print train_result
+        print "---"
         print "Scoring testing data"
         test_result = score_trained_model(model, x_test, y_test)
         print test_result
