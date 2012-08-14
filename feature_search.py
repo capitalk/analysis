@@ -322,11 +322,11 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
         
         print "Scoring training data"
-        model = RandomForestClassifier(n_estimators = 5)
+        #model = RandomForestClassifier(n_estimators = 5)
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
         #model = LogisticRegression()
-        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
+        model = DecisionTreeClassifier(max_depth = 3)  
 
         model.fit(x_train, y_train)
         
