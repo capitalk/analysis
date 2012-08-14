@@ -325,9 +325,10 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         #model = RandomForestClassifier(n_estimators = 5)
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
-        #model = LogisticRegression()
-        model = DecisionTreeClassifier(max_depth = 3)  
-        model.fit(x_train, y_train)
+        model = LogisticRegression()
+        model.fit(x_train, y_train, class_weight='auto')
+        #model = DecisionTreeClassifier(max_depth = 3)  
+        #model.fit(x_train, y_train)
         
         train_result, train_pred = score_trained_model(model, x_train, y_train)
         assert len(train_pred) == len(y_train)
