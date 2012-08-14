@@ -12,6 +12,7 @@ import h5py
 from agg import mad, crossing_rate, rolling_fn 
 from normalization import ZScore 
 import pylab
+import bisect 
 
 """
 A feature consists of: 
@@ -31,6 +32,9 @@ FeatureParams = namedtuple('FeatureParams',
   'normalizer', 
   'past_lag',
   'transform'))
+
+Result = namedtuple('Result', 
+  ('neg', 'zero', 'pos', 'precision', 'recall', 'score', 'accuracy'))
   
 def copy_params(old_params, **kwds):
   param_args = {}
@@ -52,14 +56,14 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    'aggregator' : [None, np.mean], #, crossing_rate],
+    'aggregator' : [None, np.mean, np.std], #, crossing_rate],
      
      # window sizes in seconds
-     'aggregator_window_size' : [None, 10, 100], 
+     'aggregator_window_size' : [100, 1000], 
      'normalizer': [ZScore], # [ZScore, LaplaceScore]
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
-     'past_lag':  [None, 50, 200, 300, 400, 600, 1200, 6000], 
+     'past_lag':  [None, 50, 200, 300, 400, 500, 600, 1200, 6000], 
      'transform' : [None], 
   }
   def filter(x):
@@ -67,6 +71,28 @@ def gen_feature_params(raw_features=None):
      (x.aggregator is None and x.aggregator_window_size is not None) or \
      (x.aggregator is not None and x.aggregator_window_size is None)
   return all_param_combinations(options, filter = filter)
+
+def compute_indices_from_hours(hdf, start_hour = None, end_hour = None):
+  milliseconds_per_hour = 60 * 60 * 1000 
+
+  if start_hour is None:
+    start_millisecond = 0
+  else:
+    start_millisecond = start_hour * milliseconds_per_hour
+    
+  if end_hour is None:
+    end_millisecond = 24 * milliseconds_per_hour 
+  else: 
+    end_millisecond = end_hour * milliseconds_per_hour
+  
+  t = hdf['t'][:]
+  file_ok = start_millisecond < t[-1] and end_millisecond > t[0]
+  if file_ok:
+    start_idx = bisect.bisect_right(t, start_millisecond)
+    end_idx = bisect.bisect_left(t, end_millisecond) 
+    return True, start_idx, end_idx
+  else:
+    return False, None, None 
   
 def construct_dataset(hdfs, features, future_offset, 
      start_hour = 3, end_hour = 7):
@@ -78,10 +104,17 @@ def construct_dataset(hdfs, features, future_offset,
   all_aggregator_window_sizes = \
      [(f.aggregator_window_size if f.aggregator_window_size else 0) \
       for f in features]
-  
+   
   max_aggregator_window_size = max(all_aggregator_window_sizes)
-  
   for  hdf in hdfs:
+    file_ok, start_idx, end_idx = compute_indices_from_hours(hdf, start_hour, end_hour)
+    if not file_ok:
+      print "Skipping %s since it doesn't contain hours %d-%d" % \
+      (hdf.filename, start_hour, end_hour)
+      continue
+    else:
+      print "start idx = %d, end idx = %d" % (start_idx, end_idx)
+      
     cols = []
     # construct all the columns for a subset of rows
     for param in features:
@@ -94,7 +127,7 @@ def construct_dataset(hdfs, features, future_offset,
         (4) optionally get the percent change from some point in the past
       """
       raw_feature = param.raw_feature
-      x = hdf[raw_feature][:]
+      x = hdf[raw_feature][start_idx:end_idx]
       assert np.all(np.isfinite(x))
       if 'vol' in raw_feature:
         x /= 10.0 ** 6
@@ -144,12 +177,15 @@ def construct_dataset(hdfs, features, future_offset,
   print "Final shape", X.shape
   return X, total_lag 
 
-def construct_outputs(hdfs, future_offset, lag = 0):
+def construct_outputs(hdfs, future_offset, lag = 0, start_hour = None, end_hour = None):
   outputs = []
   for hdf in hdfs:
+    file_ok, start_idx, end_idx = compute_indices_from_hours(hdf, start_hour, end_hour)
+    if not file_ok:
+      continue
     # signal is: will the bid go up in some number of seconds
-    bids = hdf['bid'][:]
-    offers = hdf['offer'][:]
+    bids = hdf['bid'][start_idx:end_idx]
+    offers = hdf['offer'][start_idx:end_idx]
 
     y = np.zeros(len(bids) - future_offset, dtype='int')
     y[bids[future_offset:] > offers[:-future_offset]] = 1
@@ -196,6 +232,33 @@ def common_features(hdfs):
       feature_set.remove(feature_name)
   return feature_set 
 
+def score_trained_model(model, x, y, beta = 0.1):
+  pred = model.predict(x)
+  correct = pred == y
+  y_nz = y != 0 
+  
+  pred_up = pred > 0
+  pred_down = pred < 0
+  pred_nz = pred_up | pred_down
+  correct_nz = correct & pred_nz
+  num_correct_nz = np.sum(correct_nz) 
+  precision = num_correct_nz / float(np.sum(pred_nz))
+  recall = num_correct_nz / float(np.sum(y_nz))
+  score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
+  
+  n_neg = np.sum(pred_down)
+  n_zero = np.sum(pred == 0)
+  n_pos =  np.sum(pred_up) 
+  print "pred  zero = %d, neg = %d, pos = %d" % \
+    (n_zero, n_neg , n_neg )
+  print "precision =", precision 
+  print "recall =", recall 
+  print "score =", score
+  result = Result(zero = n_zero, neg = n_neg, pos = n_pos, 
+    precision = precision, recall = recall, score = score, 
+    acc = np.mean(correct))
+  return result
+
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
   if new_param.raw_feature is None:
     raw_features = common_features(training_hdfs)
@@ -204,7 +267,7 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
   else:
     raw_features = [new_param.raw_feature]
   print "Raw features: ", raw_features
-  result = {}
+  results = {}
   last_train = None
   y_train = None
   y_test = None 
@@ -213,17 +276,17 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
     print param
     if param in old_params:
       print "...duplicate param in dataset, skipping..."
-      result[param] = None
+      results[param] = None
     elif param.raw_feature == 't' and param.aggregator not in [np.mean, np.median, None]:
       print "raw_feature = time with aggregator = %s, skipping..." % param.aggregator
-      result[param] = None
+      results[param] = None
     else:  
       params = old_params + [param]
       x_train, lag = \
         construct_dataset(training_hdfs, params, future_offset, start_hour, end_hour)
       if y_train is None:
-        y_train = construct_outputs(training_hdfs, future_offset, lag)
-        y_test = construct_outputs(testing_hdfs, future_offset, lag)
+        y_train = construct_outputs(training_hdfs, future_offset, lag, start_hour, end_hour)
+        y_test = construct_outputs(testing_hdfs, future_offset, lag, start_hour, end_hour)
 
       if last_train is not None and np.all(last_train == x_train):
         "WARNING: Got identical data as last iteration for " + raw_feature
@@ -255,44 +318,34 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_test_ok = False
         print "Testing label contains NaN or infinity"
       if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
-        model = RandomForestClassifier(n_estimators = 3)
-        #model = SGDClassifier(loss = 'log')
-        #model = LogisticRegression()
         
-        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
-        model.fit(x_train, y_train)
-        
-        pred = model.predict(x_test)
-        
-        correct = pred == y_test
-        
-        pred_up = pred > 0
-        pred_down = pred < 0
-        pred_nz = pred_up | pred_down
-        test_nz = y_test != 0 
-        correct_nz = correct & pred_nz
-        num_correct_nz = np.sum(correct_nz) 
-        precision = num_correct_nz / float(np.sum(pred_nz))
-        recall = num_correct_nz / float(np.sum(test_nz))
-        beta = 0.1
-        score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
         print "train zero = %d, neg = %d, pos = %d" % \
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
         print "test  zero = %d, neg = %d, pos = %d" % \
           (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
-        print "pred  zero = %d, neg = %d, pos = %d" % \
-          (np.sum(pred == 0), np.sum(pred_down), np.sum(pred_up))
-        print "precision =", precision 
-        print "recall =", recall 
-        print "score =", score
-          
-        result[param] = score
-        print 
+        
+        print "Scoring training data"
+        #model = RandomForestClassifier(n_estimators = 3)
+        n_iter = int(math.ceil(10.0**6 / x_train.shape[0]))
+        model = SGDClassifier(loss = 'log', n_iter = n_iter)
+        model.fit(x_train, y_train)
+        #model = LogisticRegression()
+        #model = DecisionTreeClassifier(max_depth = min(x_train.shape[1], 3))  
+        
+        train_result = score_trained_model(model, x_train, y_train)
+        print train_result
+        print "Scoring testing data"
+        test_result = score_trained_model(model, x_test, y_test)
+        print test_result
+        print
+        results[param] = (train_result, test_result)
+        
+        
       else:
         print "Skipping due to bad data", param 
-        result[param] = None
+        results[param] = None
         print 
-  return result
+  return results
 
 # affects only future self, no time travel but watch for self improvement
 # and itching, but actually it just might be autoimmune or a mosquito 
@@ -340,10 +393,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
       end_hour = end_hour)
   
   for feature_num in xrange(num_features):
-    worst_score = 1
-    worst_param = None 
-    best_score = 0
-    best_param = None
+
     print "=== Searching for feature #%d ===" % (feature_num+1)
     print "Launching %d jobs over %d training files and %d testing files" %  \
       (len(all_possible_params), len(training_keys), len(testing_keys))
@@ -357,30 +407,47 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
         _label=label, 
         _type = 'f2')
     results = {}
-    for (i, result) in enumerate(cloud.iresult(jids)):
+    best = {'params' : [], 'train_score' : 0,  'test_score': 0}
+    worst = {'params': [], 'train_score': 1, 'test_score': 1 }
+    
+    for (i, results) in enumerate(cloud.iresult(jids)):
       print "Received result:" 
-      if result is None:
-        result = {}
+      if results is None:
+        results = {}
       else:
-        assert isinstance(result, dict)
-      for (param, score) in result.items():
-        print param, score
-        results[tuple(chosen_params + [param])]  = score
-        if score and score > best_score:
-          best_score = score
-          best_param = param
-        elif score and score < worst_score:
-          worst_score = score
-          worst_param = param
-    print "Current worst after result #%d for feature #%d: %s, score = %s" % \
-      (i + 1, feature_num + 1, worst_param, worst_score)
-    print "Current best after result #%d for feature #%d: %s, score = %s" % \
-      (i + 1, feature_num + 1, best_param, best_score)
-    chosen_params.append(best_param)
+        assert isinstance(results, dict)
+      for (param, r) in results.items():
+        key = tuple(chosen_params + [param])
+        results[key] = r
+        if r is None:
+          print param, "<skipped>"
+        else:
+          train_result, test_result = r
+          print param
+          print "result for training data:", train_result
+          print "result for testing data:", test_result
+          print 
+          if train_result.score > best['train_score']:
+            best  = { 
+              'params':key, 
+              'train_score':train_result.score, 
+              'test_score': test_result.score
+            }
+          elif  train_result.score < worst['train_score']:
+            worst = { 
+              'params': key, 
+              'train_score': train_result.score,
+              'test_score': test_result.score
+            }
+    print "Current worst after result #%d for feature #%d: %s" % \
+      (i + 1, feature_num + 1, worst)
+    print "Current best after result #%d for feature #%d: %s" % \
+      (i + 1, feature_num + 1, best)
+    chosen_params.append(best['params'][-1])
     print
     print chosen_params
     print
-  return chosen_params, best_score, worst_score, worst_param, results
+  return chosen_params, best, worst, results
 
      
 def collect_keys_and_launch(training_pattern, testing_pattern, 
