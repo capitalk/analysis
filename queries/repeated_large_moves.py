@@ -5,9 +5,9 @@ import query_helpers
 # I never got around to making an easy way to pass arguments into the 
 # query's mapping function so I just make them globals and set them at 
 # the bottom of the file. It's ugly but it works! 
-START_TIME_MS = None
-END_TIME_MS = None 
-PRICE_CHANGE = None
+START_HOUR = None
+END_HOUR = None 
+RELATIVE_PRICE_CHANGE = None
 TIME_OFFSET_TICKS = None
 
 def mapper(hdf):
@@ -30,11 +30,11 @@ def mapper(hdf):
   # if the times contained in this file fall outside our range, just return None
   # but be careful to handle None as a value when trying to combine all the 
   # mappers' returned values.
-  if query_helpers.outside_time_range(hdf, START_TIME_MS, END_TIME_MS):
+  if query_helpers.outside_hour_range(hdf, START_HOUR, END_HOUR):
     return None
   
   start_idx, end_idx = \
-    query_helpers.compute_time_indices(hdf, START_TIME_MS, END_TIME_MS)
+    query_helpers.compute_hour_indices(hdf, START_HOUR, END_HOUR)
   
   # NB: When you pull a column out of an HDF you should always slice into it, 
   # even if you just apply the identity slice [:]. This is because slicing 
@@ -57,8 +57,8 @@ def mapper(hdf):
   # this is the predicate we are conditioning on: was the change 
   # from the past to the present greater than some threshold
   present_indicator = \
-    (np.sign(present_change_prct) == np.sign(PRICE_CHANGE)) & \
-    (np.abs(present_change_prct) >= np.abs(PRICE_CHANGE))
+    (np.sign(present_change_prct) == np.sign(RELATIVE_PRICE_CHANGE)) & \
+    (np.abs(present_change_prct) >= np.abs(RELATIVE_PRICE_CHANGE))
   
   # this is the quantity whose probability we're trying to estimate
   # how likely is the future change also to be at least epsilon in size?
@@ -67,8 +67,8 @@ def mapper(hdf):
   # and we're going to estimate that second quantity by taking
   # Sum(X and Y) / Sum(Y)
   future_indicator = \
-    (np.sign(future_change_prct) == np.sign(PRICE_CHANGE)) & \
-    (np.abs(future_change_prct) >= np.abs(PRICE_CHANGE)) &  \
+    (np.sign(future_change_prct) == np.sign(RELATIVE_PRICE_CHANGE)) & \
+    (np.abs(future_change_prct) >= np.abs(RELATIVE_PRICE_CHANGE)) &  \
     present_indicator
   
   return ccy, np.sum(future_indicator), np.sum(present_indicator)
@@ -111,12 +111,12 @@ if __name__ == '__main__':
   # since we don't currently have any way of passing args into mappers
 
   args = parser.parse_args()  
-  PRICE_CHANGE = 1 + args.price_change * 10**-4
+  RELATIVE_PRICE_CHANGE = args.price_change * 10**-4
   TIME_OFFSET_TICKS = args.time_offset / 10
-  ms_in_hour = 1000*60*60
-  START_TIME_MS = args.start_hour * ms_in_hour
-  END_TIME_MS = args.end_hour * ms_in_hour
-  assert START_TIME_MS < END_TIME_MS
+
+  START_HOUR = args.start_hour 
+  END_HOUR = args.end_hour 
+  assert START_HOUR < END_HOUR
   
   print query.run(args.pattern, 
     map_hdf = mapper, 
