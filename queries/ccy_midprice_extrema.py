@@ -15,9 +15,10 @@ def combine(values, (curr_min, curr_max)):
 from argparse import ArgumentParser 
 parser = ArgumentParser(description='min/max for ccy pair')
 parser.add_argument('--ccy', dest='ccy', type=str, required=True, help="e.g. USDJPY")
-parser.add_argument('--bucket', dest='bucekt', type=str, default='s3://capk-fxcm-hdf')
+parser.add_argument('--bucket', dest='bucket', type=str, default='capk-fxcm-hdf')
 if __name__ == '__main__':
-  args = parser.parse_args() 
+  args = parser.parse_args()
+  print "args", args 
   pattern = '*' + args.ccy + '*.hdf'
   values = query.run(args.bucket, pattern, 
     map_hdf = map, combine = combine, init = [])

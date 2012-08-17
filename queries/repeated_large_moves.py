@@ -98,13 +98,13 @@ def compute_probs(all_ccys):
 from argparse import ArgumentParser 
 parser = ArgumentParser(
   description='P(%\ change from t to t+k >= p | p-sized move from k ms ago)')
-parser.add_argument('pattern', metavar='P', type=str, required=True,
+parser.add_argument('pattern',  type=str, 
                        help='s3://capk-bucket/some-hdf-pattern')
-parser.add_argument('--time-offset', '-k', dest='k', type=int, required = True, 
+parser.add_argument('--time-offset-seconds', '-t', dest='time_offset', type=int, required = True, 
   help = "time in seconds")
-parser.add_argument('--price-change', '-p', dest='p', type=float, required=True, 
+parser.add_argument('--price-change', '-p', dest='price_change', type=float, required=True, 
   help = 'price change in percent pips, i.e. 2 means future = current * 1.0002')
-parser.add_argument('--start-hour', dest='start_time', type=int, default = 0)
+parser.add_argument('--start-hour', dest='start_hour', type=int, default = 0)
 parser.add_argument('--end-hour', dest='end_hour', type=int, default = 24)
 if __name__ == '__main__':
   # parse args and then set globals to the values of these args, 

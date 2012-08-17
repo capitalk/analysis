@@ -25,7 +25,7 @@ There are quite a few arguments here but the only essential ones are *bucket*, *
 
 Selecting Files
 ----------------
-The first two arguments (*bucket* and *key\_pattern*) tell the query engine which files you'd like to process. The bucket has to be the exact name of one of our S3 buckets (i.e. "s3://capk-fxcm-hdf") but the key pattern can contain wildcards (i.e. "USDJPY\*2012\_07\*" will select all USD/JPY files from July of 2012). You can also, as a convenience, give a complete pattern for *bucket* (i.e. "s3://capk-fxcm/\*EURUSD\*") and leave *key\_pattern* as `None`. 
+The first two arguments (*bucket* and *key\_pattern*) tell the query engine which files you'd like to process. The bucket has to be the exact name of one of our S3 buckets (i.e. "capk-fxcm-hdf") but the key pattern can contain wildcards (i.e. "USDJPY\*2012\_07\*" will select all USD/JPY files from July of 2012). You can also, as a convenience, give a complete pattern for *bucket* (i.e. "s3://capk-fxcm/\*EURUSD\*") and leave *key\_pattern* as `None`. 
 
 Parallel Map
 ----------------
@@ -62,7 +62,7 @@ We'll get the currency pattern from the commandline arguments, turn it into a wi
     from argparse import ArgumentParser 
     parser = ArgumentParser(description='min/max for ccy pair')
     parser.add_argument('--ccy', dest='ccy', type=str, required=True, help="e.g. USDJPY")
-    parser.add_argument('--bucket', dest='bucekt', type=str, default='s3://capk-fxcm-hdf')
+    parser.add_argument('--bucket', dest='bucket', type=str, default='capk-fxcm-hdf')
     if __name__ == '__main__':
       args = parser.parse_args() 
       pattern = '*' + args.ccy + '*.hdf'
