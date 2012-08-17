@@ -78,7 +78,7 @@ def launch_jobs(bucket, key_names, work_fn, combine, acc, label, _type,
 def run(bucket, key_pattern = None, 
   map_hdf = None, map_dataframe = None,
   init = None, combine = None,  post_process = None, 
-  accept_none_as_result = False, label = None, _type = 'f2'):
+  accept_none_as_result = True, label = None, _type = 'f2'):
   
   """
   Runs query functions over collections of HDF files on S3. 
