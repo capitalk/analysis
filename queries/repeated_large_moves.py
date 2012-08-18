@@ -1,14 +1,19 @@
 import numpy as np
 import query 
 import query_helpers
+from collections import namedtuple
+
+Input = namedtuple('Input', ('ccy', 'past_change', 'future_change'))
+Result = namedtuple('Result', ('count', 'total'))
 
 # I never got around to making an easy way to pass arguments into the 
 # query's mapping function so I just make them globals and set them at 
 # the bottom of the file. It's ugly but it works! 
 START_HOUR = None
 END_HOUR = None 
-RELATIVE_PRICE_CHANGE = None
-TIME_OFFSET_TICKS = None
+PAST_CHANGE = None
+FUTURE_CHANGE = None
+OFFSET_TICKS = None
 
 def mapper(hdf):
   """Takes an HDF, extracts its midprice for the user-specified time range, 
@@ -44,9 +49,9 @@ def mapper(hdf):
   offer = hdf['offer'][start_idx:end_idx]
   midprice = (bid+offer)/2.0
   
-  past = midprice[2*TIME_OFFSET_TICKS:]
-  present = midprice[TIME_OFFSET_TICKS:-TIME_OFFSET_TICKS]
-  future = midprice[:-2*TIME_OFFSET_TICKS]
+  past = midprice[:-2*OFFSET_TICKS]
+  present = midprice[OFFSET_TICKS:-OFFSET_TICKS]
+  future = midprice[2*OFFSET_TICKS:]
   
   # how much did midprice change from t-2k til t-k
   present_change_prct = (present-past) / past
@@ -57,8 +62,8 @@ def mapper(hdf):
   # this is the predicate we are conditioning on: was the change 
   # from the past to the present greater than some threshold
   present_indicator = \
-    (np.sign(present_change_prct) == np.sign(RELATIVE_PRICE_CHANGE)) & \
-    (np.abs(present_change_prct) >= np.abs(RELATIVE_PRICE_CHANGE))
+    (np.sign(present_change_prct) == np.sign(PAST_CHANGE)) & \
+    (np.abs(present_change_prct) >= np.abs(PAST_CHANGE))
   
   # this is the quantity whose probability we're trying to estimate
   # how likely is the future change also to be at least epsilon in size?
@@ -67,8 +72,8 @@ def mapper(hdf):
   # and we're going to estimate that second quantity by taking
   # Sum(X and Y) / Sum(Y)
   future_indicator = \
-    (np.sign(future_change_prct) == np.sign(RELATIVE_PRICE_CHANGE)) & \
-    (np.abs(future_change_prct) >= np.abs(RELATIVE_PRICE_CHANGE)) &  \
+    (np.sign(future_change_prct) == np.sign(FUTURE_CHANGE)) & \
+    (np.abs(future_change_prct) >= np.abs(FUTURE_CHANGE)) &  \
     present_indicator
   
   return ccy, np.sum(future_indicator), np.sum(present_indicator)
@@ -82,18 +87,6 @@ def combine(all_ccys, mapper_result):
     old_event_count, old_total = all_ccys.get(ccy, (0,0))
     all_ccys[ccy] = (old_event_count + event_count, old_total + total)
 
-
-def compute_probs(all_ccys):
-  """Once all the counts have been collected, do the simple task of 
-     computing probs by dividing event counts by the totals
-  """
-  result = {}
-  for (ccy,  (event_count, total)) in all_ccys.items():
-    if total == 0:
-      result[ccy] = 0.0
-    else: 
-      result[ccy]  = float(event_count) / total
-  return result 
   
 from argparse import ArgumentParser 
 parser = ArgumentParser(
@@ -102,8 +95,9 @@ parser.add_argument('pattern',  type=str,
                        help='s3://capk-bucket/some-hdf-pattern')
 parser.add_argument('--time-offset-seconds', '-t', dest='time_offset', type=int, required = True, 
   help = "time in seconds")
-parser.add_argument('--price-change', '-p', dest='price_change', type=float, required=True, 
+parser.add_argument('--past-change', dest='past_change', type=float, required=True, 
   help = 'price change in percent pips, i.e. 2 means future = current * 1.0002')
+parser.add_argument('--future-change', dest='future_change', type=float )
 parser.add_argument('--start-hour', dest='start_hour', type=int, default = 0)
 parser.add_argument('--end-hour', dest='end_hour', type=int, default = 24)
 if __name__ == '__main__':
@@ -111,15 +105,30 @@ if __name__ == '__main__':
   # since we don't currently have any way of passing args into mappers
 
   args = parser.parse_args()  
-  RELATIVE_PRICE_CHANGE = args.price_change * 10**-4
-  TIME_OFFSET_TICKS = args.time_offset / 10
+  PAST_CHANGE = args.past_change * 10**-4
+  if args.future_change:
+    FUTURE_CHANGE = args.future_change * 10 ** -4
+  else:
+    FUTURE_CHANGE = PAST_CHANGE 
+  OFFSET_TICKS = args.time_offset * 10
 
   START_HOUR = args.start_hour 
   END_HOUR = args.end_hour 
+  
   assert START_HOUR < END_HOUR
   
-  print query.run(args.pattern, 
-    map_hdf = mapper, 
-   init = {}, combine = combine, 
-   post_process = compute_probs)
+  print "past change %", PAST_CHANGE
+  print "future change %", FUTURE_CHANGE 
+  print "time offset in ticks", OFFSET_TICKS
   
+  all_ccys =  query.run(args.pattern, 
+    map_hdf = mapper, 
+   init = {}, combine = combine)
+  # Once all the counts have been collected, do the simple task of 
+  # computing probs by dividing event counts by the totals
+  result = {}
+  for (ccy,  (event_count, total)) in all_ccys.items():
+    if total == 0: prob = 0
+    else: prob = event_count / float(total)
+    result[ccy]  = {'prob':prob, 'count':event_count, 'total':total}
+  print result
