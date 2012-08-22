@@ -13,6 +13,28 @@ from agg import mad, crossing_rate, rolling_fn
 from normalization import ZScore 
 import pylab
 import bisect 
+import pandas 
+
+def profitable_future_change(bid, offer, offset):
+  n = len(bid) - offset
+  result = np.zeros(n)
+  buy_profit = bid[offset:] - offer[:-offset]
+  buy_idx = buy_profit > 0 
+
+  # buying is profitable when the price goes up later 
+  result[buy_idx] = buy_profit[buy_idx]  
+  sell_profit = bid[:-offset] - offer[offset:]
+  sell_idx = sell_profit > 0
+  # selling is profitable when the price goes down later 
+  result[sell_idx] = -sell_profit[sell_idx]
+  return result 
+
+def spread_normalized_future_change(bid, offer, offset):
+  spread = offer - bid 
+  smoothed_spread = pandas.rolling_mean(spread, offset)
+  smoothed_spread = smoothed_spread[offset:]
+  profitable_change = profitable_future_change(bid, offer, offset)
+  return profitable_change / smoothed_spread 
 
 """
 A feature consists of: 
