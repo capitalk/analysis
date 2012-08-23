@@ -272,11 +272,15 @@ def discretize_forecast(y):
   
 def score_trained_model(model, x, y, beta = 0.1):
   pred = model.predict(x)
-  
+  print "p", pred[1000:1050]
   pred = discretize_forecast(pred)
+  print "pd", pred[1000:1050]
+  print "y", y[1000:1050]
   y = discretize_forecast(y)
+  print "yd", y[1000:1050]
   
   correct = (pred == y)
+  print correct[1000:1050]
   y_nz = (y != 0) 
   
   pred_up = pred > 0
@@ -370,7 +374,7 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
         # model = LogisticRegression()
-        model = RandomForestRegressor(n_estimators = 5)
+        model = RandomForestRegressor(n_estimators = 5, max_depth=10)
         #model = LinearRegression()
         model.fit(x_train, y_train)
         #model = DecisionTreeClassifier(max_depth = 3)  
