@@ -1,8 +1,8 @@
 import numpy as np
 #import sklearn.ensembles
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.svm import LinearSVC
-from sklearn.linear_model import LogisticRegression 
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.tree import DecisionTreeClassifier 
 from sklearn.linear_model import SGDClassifier
 import math 
@@ -14,6 +14,7 @@ from normalization import ZScore
 import pylab
 import bisect 
 import pandas 
+
 
 def profitable_future_change(bid, offer, offset):
   n = len(bid) - offset
@@ -35,6 +36,13 @@ def spread_normalized_future_change(bid, offer, offset):
   smoothed_spread = smoothed_spread[offset:]
   profitable_change = profitable_future_change(bid, offer, offset)
   return profitable_change / smoothed_spread 
+
+def spread_normalized_midprice_change(bid, offer, dt):
+  spread = bid - offer
+  smoothed_spread = pandas.rolling_mean(spread, dt)[dt:]
+  midprice = (bid+offer)/2.0
+  change = midprice[dt:] - midprice[:-dt]
+  return change / smoothed_spread #pandas.rolling_median(change, dt)[dt:] / smoothed_spread[dt:]
 
 """
 A feature consists of: 
@@ -206,10 +214,11 @@ def construct_outputs(hdfs, future_offset, lag = 0, start_hour = None, end_hour 
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][start_idx:end_idx]
     offers = hdf['offer'][start_idx:end_idx]
-
-    y = np.zeros(len(bids) - future_offset, dtype='int')
-    y[bids[future_offset:] > offers[:-future_offset]] = 1
-    y[offers[future_offset:] < bids[:-future_offset]] = -1 
+    
+    #y = np.zeros(len(bids) - future_offset, dtype='int')
+    #y[bids[future_offset:] > offers[:-future_offset]] = 1
+    #y[offers[future_offset:] < bids[:-future_offset]] = -1 
+    y = spread_normalized_midprice_change(bids, offers, future_offset)
     assert np.all(np.isfinite(y))
     y = y[lag:]
     outputs.append(y)
@@ -252,10 +261,23 @@ def common_features(hdfs):
       feature_set.remove(feature_name)
   return feature_set 
 
+def discretize_forecast(y):
+  z = np.zeros(len(y), dtype='int')
+  up_mask = y>=1
+  down_mask = y<=-1
+  print "DF: up: %d, down: %d" % (np.sum(up_mask), np.sum(down_mask))
+  z[up_mask] = 1
+  z[down_mask] = -1
+  return z
+  
 def score_trained_model(model, x, y, beta = 0.1):
   pred = model.predict(x)
-  correct = pred == y
-  y_nz = y != 0 
+  
+  pred = discretize_forecast(pred)
+  y = discretize_forecast(y)
+  
+  correct = (pred == y)
+  y_nz = (y != 0) 
   
   pred_up = pred > 0
   pred_down = pred < 0
@@ -347,8 +369,10 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         #model = RandomForestClassifier(n_estimators = 5)
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
-        model = LogisticRegression()
-        model.fit(x_train, y_train, class_weight='auto')
+        # model = LogisticRegression()
+        #model = RandomForestRegressor(n_estimators = 5)
+        model = LinearRegression()
+        model.fit(x_train, y_train)
         #model = DecisionTreeClassifier(max_depth = 3)  
         #model.fit(x_train, y_train)
         
@@ -374,6 +398,23 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print 
   return results
 
+def download_files(bucket, keys, parallel = False):
+  hdfs = []
+  def download(k):
+    return cloud_helpers.download_file_from_s3(bucket, k)
+  if parallel:
+    for filename in cloud.mp.iresult(cloud.mp.map(download, training_keys)):
+      print "Downloaded  file", filename
+      hdf = h5py.File(filename)
+      hdfs.append(hdf)
+  else:
+    for k in keys:
+      filename = download(k)
+      hdf = h5py.File(filename)
+      hdfs.append(hdf)
+  return hdfs
+    
+  
 # affects only future self, no time travel but watch for self improvement
 # and itching, but actually it just might be autoimmune or a mosquito 
 # It's often hard to tell the difference. 
@@ -386,21 +427,10 @@ def download_and_eval(bucket, training_keys, testing_keys, old_params, new_param
   n_train = len(training_keys)
   n_test = len(testing_keys)
   print "Downloading %d training HDFs..." % n_train
-  training_hdfs = []
-  def download(k):
-    return cloud_helpers.download_file_from_s3(bucket, k) 
-    
-  for filename in cloud.mp.iresult(cloud.mp.map(download, training_keys)):
-    print "Downloaded training file", filename
-    hdf = h5py.File(filename)
-    training_hdfs.append(hdf)
-  
+  training_hdfs = download_files(bucket, training_keys)
+
   print "Downloading %d testing HDFs..." % n_test
-  testing_hdfs = [] 
-  for filename in cloud.mp.iresult(cloud.mp.map(download, testing_keys)):
-    print "Downloaded testing file", filename
-    hdf = h5py.File(filename)
-    testing_hdfs.append(hdf)
+  testing_hdfs = download_files(bucket, testing_keys)
   result = \
     eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset)    
   print result
