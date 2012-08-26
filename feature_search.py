@@ -5,11 +5,18 @@ from sklearn.svm import LinearSVC
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.tree import DecisionTreeClassifier 
 from sklearn.linear_model import SGDClassifier
+from sklearn.cross_validation import KFold
+from sklearn.pipeline import Pipeline
+
+from multiprocessing import Pool 
+
+from column_normalizer import ColumnNormalizer
 import math 
 import cloud
 import cloud_helpers 
 import h5py 
 from agg import mad, crossing_rate, rolling_fn 
+
 from normalization import ZScore 
 import pylab
 import bisect 
@@ -86,14 +93,14 @@ def gen_feature_params(raw_features=None):
     raw_features = [None]
   options = { 
     'raw_feature' : raw_features,
-    'aggregator' : [None, np.mean, np.std], #, crossing_rate],
+    'aggregator' : [np.mean, np.std], #, crossing_rate],
      
      # window sizes in seconds
      'aggregator_window_size' : [100, 1000], 
      'normalizer': [ZScore], # [ZScore, LaplaceScore]
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
-     'past_lag':  [None, 50, 200, 300, 400, 500, 600, 1200, 6000], 
+     'past_lag':  [None, 200, 400, 600, 1200, 2400, 4800], 
      'transform' : [None], 
   }
   def filter(x):
@@ -215,45 +222,25 @@ def construct_outputs(hdfs, future_offset, lag = 0, start_hour = None, end_hour 
     bids = hdf['bid'][start_idx:end_idx]
     offers = hdf['offer'][start_idx:end_idx]
     
-    #y = np.zeros(len(bids) - future_offset, dtype='int')
-    #y[bids[future_offset:] > offers[:-future_offset]] = 1
-    #y[offers[future_offset:] < bids[:-future_offset]] = -1 
-    y = spread_normalized_midprice_change(bids, offers, future_offset)
+    y = np.zeros(len(bids) - future_offset, dtype='int')
+    y[bids[future_offset:] > offers[:-future_offset]] = 1
+    y[offers[future_offset:] < bids[:-future_offset]] = -1 
+    #y = spread_normalized_midprice_change(bids, offers, future_offset)
     assert np.all(np.isfinite(y))
     y = y[lag:]
     outputs.append(y)
   return np.concatenate(outputs)
-  
-def normalize_data(x, params = None, normalizers = None):
-  assert params or normalizers
-  cols = np.zeros_like(x)
-  if params is not None:
-    normalizers = []
-    for (i, p) in enumerate(params):
-      col = x[:, i]
-      n = p.normalizer
-      if n:
-        n = n()
-        n.fit(x)
-        col = n.transform(col)
-      cols[:, i] = col 
-      normalizers.append(n)
-    return cols, normalizers
-  else:
-    for (i, n) in enumerate(normalizers):
-      col = x[:, i]
-      if n: col = n.transform(col)
-      cols[:, i] = col 
-    return cols
      
 def common_features(hdfs):
   feature_set = None 
+  assert len(hdfs) > 0
   for hdf in hdfs:
     curr_set = set(hdf.attrs['features'])
     if feature_set is None:
       feature_set = curr_set
     else:
       feature_set = feature_set.intersection(curr_set)
+  assert feature_set is not None
   for feature_name in feature_set:
     vec = hdf[feature_name]
     if np.all(vec == vec[0]):
@@ -265,38 +252,61 @@ def discretize_forecast(y):
   z = np.zeros(len(y), dtype='int')
   up_mask = y>=1
   down_mask = y<=-1
-  print "DF: up: %d, down: %d" % (np.sum(up_mask), np.sum(down_mask))
   z[up_mask] = 1
   z[down_mask] = -1
   return z
   
-def score_trained_model(model, x, y, beta = 0.1):
+def score_trained_model(model, x, y, beta = 0.01):
   pred = model.predict(x)
-  print "p", pred[1000:1050]
+
   pred = discretize_forecast(pred)
-  print "pd", pred[1000:1050]
-  print "y", y[1000:1050]
   y = discretize_forecast(y)
-  print "yd", y[1000:1050]
-  
-  correct = (pred == y)
-  print correct[1000:1050]
-  y_nz = (y != 0) 
-  
-  pred_up = pred > 0
-  pred_down = pred < 0
+ 
+  # if the outputs were discrete we could just 
+  # do something simple like 'correct = (y == pred)'
+  # but we also want to gracefully handle 
+  # spread-normalized continuous predictions where
+  # any values >= 1 are up predictions, <= -1 are down
+  # predictions and everything else is considered 
+  # equivalently neutral 
+ 
+  pred_up = pred >= 1
+  pred_down = pred <= -1
   pred_nz = pred_up | pred_down
-  correct_nz = correct & pred_nz
+  pred_z = ~pred_nz 
+
+  y_up = y >= 1
+  y_down = y <= -1
+  y_nz = y_up | y_down
+  y_z = ~y_nz
+
+  correct_up = y_up & pred_up
+  correct_down = y_down & pred_down
+  correct_nz = correct_up | correct_down
+  correct_z = y_z & pred_z
+  correct = correct_nz | correct_z   
+
   num_correct_nz = np.sum(correct_nz) 
-  precision = num_correct_nz / float(np.sum(pred_nz))
-  recall = num_correct_nz / float(np.sum(y_nz))
-  score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
+  precision_denom = float(np.sum(pred_nz))
+  if precision_denom > 0:
+    precision = num_correct_nz / precision_denom
+  else:
+    precision = 0
+  recall_denom = float(np.sum(y_nz))
+  if recall_denom > 0:
+    recall = num_correct_nz / recall_denom
+  else:
+    recall = 0
+  if recall * precision > 0:
+    score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
+  else:
+    score = 0
   
   n_neg = np.sum(pred_down)
-  n_zero = np.sum(pred == 0)
+  n_zero = np.sum(pred_z)
   n_pos =  np.sum(pred_up) 
   print "pred  zero = %d, neg = %d, pos = %d" % \
-    (n_zero, n_neg , n_neg )
+    (n_zero, n_neg , n_pos )
   print "precision =", precision 
   print "recall =", recall 
   print "score =", score
@@ -305,6 +315,26 @@ def score_trained_model(model, x, y, beta = 0.1):
     precision = precision, recall = recall, score = score, 
   )
   return result, pred
+
+def cross_validate_model(model, x, y, folds = 5, parallel=True):
+  n = len(y)
+  kf = KFold(n, folds)
+  results = []
+  def train_fold(train_index, test_index):
+    x_train, x_test = x[train_index, :], x[test_index, :]
+    y_train, y_test = y[train_index], y[test_index]
+    model.fit(x_train, y_train)
+    result, _ =  score_trained_model(model, x_test, y_test)
+    return result
+  for (train_index, test_index) in kf:
+    result = train_fold(train_index, test_index)
+    results.append(result._asdict())
+
+  # average the elements of the results from every fold
+  key_names = results[0].keys()
+  averages = dict(  [ (k, np.mean([r[k] for r in results])) for k in key_names])
+  return Result(**averages)
+  
 
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
   if new_param.raw_feature is None:
@@ -315,9 +345,9 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
     raw_features = [new_param.raw_feature]
   print "Raw features: ", raw_features
   results = {}
-  last_train = None
   y_train = None
-  y_test = None 
+  y_test = None
+  best_score = 0  
   for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
     print param
@@ -335,64 +365,59 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         y_train = construct_outputs(training_hdfs, future_offset, lag, start_hour, end_hour)
         y_test = construct_outputs(testing_hdfs, future_offset, lag, start_hour, end_hour)
 
-      if last_train is not None and np.all(last_train == x_train):
-        "WARNING: Got identical data as last iteration for " + raw_feature
-      x_train, normalizers = normalize_data(x_train, params = params)
+
+      # x_train, normalizers = normalize_data(x_train, params = params)
       print "x_train shape: %s, y_train shape: %s" % (x_train.shape, y_train.shape)
-      assert normalizers is not None
-      last_train = x_train 
-      x_test, _ = \
-       construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
-      x_test = normalize_data(x_test, normalizers = normalizers)
-      print "x_test shape: %s, y_test shape: %s" % (x_test.shape, y_test.shape)
 
       # print "Training model..."
       if np.all(np.isfinite(x_train)): x_train_ok = True
       else:
         x_train_ok = False
         print "Training data contains NaN or infinity"
-      if np.all(np.isfinite(x_test)): x_test_ok = True
-      else:
-        x_test_ok = False
-        print "Testing data contains NaN or infinity"
       if np.all(np.isfinite(y_train)): y_train_ok = True
       else:
         y_train_ok = False
         print "Training label contains NaN or infinity"
         
-      if np.all(np.isfinite(y_test)): y_test_ok = True
-      else:
-        y_test_ok = False
-        print "Testing label contains NaN or infinity"
-      if x_train_ok and x_test_ok and y_train_ok and y_test_ok:
+      if x_train_ok and y_train_ok:
         
         print "train zero = %d, neg = %d, pos = %d" % \
          (np.sum(y_train == 0), np.sum(y_train < 0), np.sum(y_train > 0))
         
         print "Scoring training data"
-        #model = RandomForestClassifier(n_estimators = 5)
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
         # model = LogisticRegression()
-        model = RandomForestRegressor(n_estimators = 5, max_depth=10)
-        #model = LinearRegression()
-        model.fit(x_train, y_train)
-        #model = DecisionTreeClassifier(max_depth = 3)  
-        #model.fit(x_train, y_train)
+        # only allow a decision tree to, on average, split each feature twice 
+        n_train = len(y_train)
+        min_samples_leaf = int(round(np.sqrt(n_train)))
+        max_depth = len(params) * 2
         
-        train_result, train_pred = score_trained_model(model, x_train, y_train)
-        assert len(train_pred) == len(y_train)
+        # model = RandomForestRegressor(n_estimators = 3, max_depth=max_depth, min_samples_leaf = min_samples_leaf)
+        #model = LinearRegression()
+        model = RandomForestClassifier(n_estimators = 3, max_depth = max_depth)
+        normalizer = ColumnNormalizer([p.normalizer for p in params])
+        pipeline = Pipeline([ ('normalize', normalizer), ('model', model)])
+        train_result = cross_validate_model(pipeline, x_train, y_train) 
         print train_result
         print "---"
-        
-        print "Scoring testing data"
-        print "test  zero = %d, neg = %d, pos = %d" % \
-          (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
-        
-        test_result, test_pred = score_trained_model(model, x_test, y_test)
-        assert len(test_pred) == len(y_test)
-        print test_result
-        print
+        if train_result.score > best_score:
+          best_score = train_result.score
+ 
+          x_test, _ = \
+           construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
+          # x_test = normalize_data(x_test, normalizers = normalizers)
+          print "x_test shape: %s, y_test shape: %s" % (x_test.shape, y_test.shape)
+          print "Scoring testing data"
+          print "test  zero = %d, neg = %d, pos = %d" % \
+            (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
+          pipeline.fit(x_train, y_train)
+          test_result, test_pred = score_trained_model(model, x_test, y_test)
+          assert len(test_pred) == len(y_test), "len pred = %d, len y_test = %d" % (len(test_pred), len(y_test))
+          print test_result
+          print
+        else:
+          test_result = None
         results[param] = (train_result, test_result)
         
         
@@ -402,20 +427,27 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print 
   return results
 
-def download_files(bucket, keys, parallel = False):
+def download_files(bucket, keys, parallel = True):
   hdfs = []
+
   def download(k):
     return cloud_helpers.download_file_from_s3(bucket, k)
+
+  def receive(filename):
+    print "Downloaded", filename
+    hdf = h5py.File(filename)
+    hdfs.append(hdf)
+
   if parallel:
-    for filename in cloud.mp.iresult(cloud.mp.map(download, training_keys)):
-      print "Downloaded  file", filename
-      hdf = h5py.File(filename)
-      hdfs.append(hdf)
+    #  pool = Pool(min(8, len(keys)))
+    #  pool.map_async(download, keys, callback = receive)
+    #  pool.close()
+    #  pool.join()
+    map(receive, cloud.mp.iresult(cloud.mp.map(download, keys)))
+      
   else:
     for k in keys:
-      filename = download(k)
-      hdf = h5py.File(filename)
-      hdfs.append(hdf)
+      receive(download(k))
   return hdfs
     
   
@@ -442,7 +474,7 @@ def download_and_eval(bucket, training_keys, testing_keys, old_params, new_param
     
 def launch_jobs(hdf_bucket, training_keys, testing_keys, 
     raw_features = None, start_hour = 3, end_hour = 7, 
-    num_features = 1, future_offset = 450):
+    num_features = 1, future_offset = 600):
   all_possible_params = gen_feature_params(raw_features)
 
   chosen_params = []
@@ -516,7 +548,7 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
 
      
 def collect_keys_and_launch(training_pattern, testing_pattern, 
-    start_hour = 3, end_hour = 7, num_features = 1, future_offset = 450):
+    start_hour = 3, end_hour = 7, num_features = 1, future_offset = 600):
   # if files are local then buckets are None
   # otherwise we expect HDFs to be on the same S3 bucket 
   
@@ -564,7 +596,7 @@ parser.add_argument('--test', type=str, dest='testing_pattern', required=True,
 parser.add_argument('--start-hour', type = int, default = 3, dest="start_hour")
 parser.add_argument('--end-hour', type = int, default = 7, dest="end_hour")
 parser.add_argument('--num-features', type=int, default = 1, dest='num_features')
-parser.add_argument('--future-ticks', type=int, default = 450, dest='future_ticks')
+parser.add_argument('--future-ticks', type=int, default = 600, dest='future_ticks')
 
 if __name__ == '__main__':
   args = parser.parse_args()
