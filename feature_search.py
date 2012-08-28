@@ -97,10 +97,10 @@ def gen_feature_params(raw_features=None):
      
      # window sizes in seconds
      'aggregator_window_size' : [100, 1000], 
-     'normalizer': [ZScore], # [ZScore, LaplaceScore]
+     'normalizer': [None], #ZScore], # [ZScore, LaplaceScore]
      # all times in seconds-- if the time isn't None then we measure the 
      # prct change relative to that past point in time
-     'past_lag':  [None, 200, 400, 600, 1200, 2400, 4800], 
+     'past_lag':  [None, 300, 600, 1200, 2400, 4800], 
      'transform' : [None], 
   }
   def filter(x):
@@ -145,9 +145,9 @@ def construct_dataset(hdfs, features, future_offset,
   max_aggregator_window_size = max(all_aggregator_window_sizes)
   for  hdf in hdfs:
     file_ok, start_idx, end_idx = compute_indices_from_hours(hdf, start_hour, end_hour)
-    if not file_ok:
+    if not file_ok or (end_idx - start_idx) <= future_offset:
       print "Skipping %s since it doesn't contain hours %d-%d" % \
-      (hdf.filename, start_hour, end_hour)
+        (hdf.filename, start_hour, end_hour)
       continue
     
     cols = []
@@ -164,6 +164,7 @@ def construct_dataset(hdfs, features, future_offset,
       raw_feature = param.raw_feature
       x = hdf[raw_feature][start_idx:end_idx]
       assert np.all(np.isfinite(x))
+      assert len(x) > future_offset
       if 'vol' in raw_feature:
         x /= 10.0 ** 6
       elif raw_feature == 't':
@@ -176,13 +177,14 @@ def construct_dataset(hdfs, features, future_offset,
         assert np.all(np.isfinite(x)), \
           "Got bad data from rolling aggregator %s (win size = %d)" %\
              (param.aggregator, param.aggregator_window_size) 
-      if param.transform: x = param.transform(x)
+      if param.transform:
+        x = param.transform(x)
       assert np.all(np.isfinite(x))
       lag = param.past_lag
-      if lag:  
+      if lag:
         past = x[:-lag]
         present = x[lag:]
-        x = (present - past) 
+        x = (present - past)
     
       # remove last future_offset ticks, since we have no output for them
       x = x[:-future_offset]
@@ -216,16 +218,31 @@ def construct_outputs(hdfs, future_offset, lag = 0, start_hour = None, end_hour 
   outputs = []
   for hdf in hdfs:
     file_ok, start_idx, end_idx = compute_indices_from_hours(hdf, start_hour, end_hour)
-    if not file_ok:
+    if not file_ok or (end_idx - start_idx) <= future_offset:
       continue
     # signal is: will the bid go up in some number of seconds
     bids = hdf['bid'][start_idx:end_idx]
     offers = hdf['offer'][start_idx:end_idx]
     
     y = np.zeros(len(bids) - future_offset, dtype='int')
-    y[bids[future_offset:] > offers[:-future_offset]] = 1
-    y[offers[future_offset:] < bids[:-future_offset]] = -1 
+    future_bids = bids[future_offset:]
+    past_bids = bids[:-future_offset]
+    assert len(future_bids) == len(past_bids), \
+      "Expected future_bids (len %d) and past_bids (len %d) to be same length (future_offset = %d)" % \
+      (len(future_bids), len(past_bids), future_offset)
+ 
+    future_offers = offers[future_offset:]
+    past_offers = offers[:-future_offset]
+    assert len(future_offers) == len(past_offers), \
+      "Expected future_offers (len %d) and past_offers (len %d) to be same length (future_offset = %d)" % \
+      (len(future_offers), len(past_offers), future_offset)
+
+    y[future_bids > past_offers] = 1
+    y[future_offers < past_bids] = -1
+
+    #y[offers[future_offset:] < bids[:-future_offset]] = -1 
     #y = spread_normalized_midprice_change(bids, offers, future_offset)
+
     assert np.all(np.isfinite(y))
     y = y[lag:]
     outputs.append(y)
@@ -241,27 +258,21 @@ def common_features(hdfs):
     else:
       feature_set = feature_set.intersection(curr_set)
   assert feature_set is not None
-  for feature_name in feature_set:
+  for feature_name in list(feature_set):
     vec = hdf[feature_name]
-    if np.all(vec == vec[0]):
+    if feature_name == 't':
+      print "Skipping time feature"
+      feature_set.remove(feature_name)
+    elif np.all(vec == vec[0]):
       print "Skipping feature %s since it's constant %s" % (feature_name, vec[0])
       feature_set.remove(feature_name)
+    
   return feature_set 
 
-def discretize_forecast(y):
-  z = np.zeros(len(y), dtype='int')
-  up_mask = y>=1
-  down_mask = y<=-1
-  z[up_mask] = 1
-  z[down_mask] = -1
-  return z
+def combine_precision_recall(p, r, min_r = 0.001):
+  return p * min(1.0, r / min_r) 
   
-def score_trained_model(model, x, y, beta = 0.01):
-  pred = model.predict(x)
-
-  pred = discretize_forecast(pred)
-  y = discretize_forecast(y)
- 
+def prediction_score(y, pred):
   # if the outputs were discrete we could just 
   # do something simple like 'correct = (y == pred)'
   # but we also want to gracefully handle 
@@ -297,10 +308,7 @@ def score_trained_model(model, x, y, beta = 0.01):
     recall = num_correct_nz / recall_denom
   else:
     recall = 0
-  if recall * precision > 0:
-    score = (1 + beta ** 2) * precision * recall / ((beta**2 * precision) + recall)
-  else:
-    score = 0
+  score = combine_precision_recall(precision, recall)
   
   n_neg = np.sum(pred_down)
   n_zero = np.sum(pred_z)
@@ -314,7 +322,7 @@ def score_trained_model(model, x, y, beta = 0.01):
     accuracy = np.mean(correct),
     precision = precision, recall = recall, score = score, 
   )
-  return result, pred
+  return result 
 
 def cross_validate_model(model, x, y, folds = 5, parallel=True):
   n = len(y)
@@ -323,19 +331,35 @@ def cross_validate_model(model, x, y, folds = 5, parallel=True):
   def train_fold(train_index, test_index):
     x_train, x_test = x[train_index, :], x[test_index, :]
     y_train, y_test = y[train_index], y[test_index]
-    model.fit(x_train, y_train)
-    result, _ =  score_trained_model(model, x_test, y_test)
-    return result
+    if np.all(np.isfinite(x_test)) and np.all(np.isfinite(x_train)):
+      model.fit(x_train, y_train)
+      pred = model.predict(x_test)
+      prob = model.predict_proba(x_test)
+      uncertain = np.max(prob, 0) < 0.5
+      pred[uncertain] = 0
+      result = prediction_score(y_test, pred)
+    else:
+      result = None
+    results.append(result)
+
   for (train_index, test_index) in kf:
-    result = train_fold(train_index, test_index)
-    results.append(result._asdict())
-
-  # average the elements of the results from every fold
-  key_names = results[0].keys()
-  averages = dict(  [ (k, np.mean([r[k] for r in results])) for k in key_names])
-  return Result(**averages)
-  
-
+    train_fold(train_index, test_index)
+  #y_test = np.concatenate(y_tests)
+  #y_pred = np.concatenate(y_preds)
+  #return prediction_score(y_test, y_pred) 
+  if None in results:
+    combined_result = None
+  else:
+    combined_result = Result(
+      zero = np.mean([r.zero for r in results]),
+      neg = np.mean([r.neg for r in results]), 
+      pos = np.mean([r.pos for r in results]),
+      precision = np.mean([r.precision for r in results]), 
+      recall = np.mean([r.recall for r in results]), 
+      accuracy = np.mean([r.accuracy for r in results]),
+      score = np.mean([r.score for r in results]), 
+    )
+  return combined_result 
 def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, end_hour, future_offset):
   if new_param.raw_feature is None:
     raw_features = common_features(training_hdfs)
@@ -348,6 +372,10 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
   y_train = None
   y_test = None
   best_score = 0  
+  best_model = None
+  print "old_params", old_params
+  print "new_param", new_param
+  print "raw_features", raw_features 
   for (i, raw_feature) in enumerate(raw_features):
     param = copy_params(new_param, raw_feature = raw_feature)
     print param
@@ -387,23 +415,32 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print "Scoring training data"
         #n_iter = min(2, int(math.ceil(10.0**6 / x_train.shape[0])))
         #model = SGDClassifier(loss = 'log', n_iter = n_iter, shuffle = True)
-        # model = LogisticRegression()
-        # only allow a decision tree to, on average, split each feature twice 
         n_train = len(y_train)
-        min_samples_leaf = int(round(np.sqrt(n_train)))
-        max_depth = len(params) * 2
-        
+        n_features = x_train.shape[1]
+         
         # model = RandomForestRegressor(n_estimators = 3, max_depth=max_depth, min_samples_leaf = min_samples_leaf)
         #model = LinearRegression()
-        model = RandomForestClassifier(n_estimators = 3, max_depth = max_depth)
+        def mk_rf():
+          min_samples_leaf = int(round(np.log2(n_train)))
+          n_estimators = 7
+          model = RandomForestClassifier(
+            n_estimators = n_estimators, 
+            max_depth = min(4, 1+n_features), 
+            min_samples_leaf = min_samples_leaf, 
+            max_features = n_features,
+          )
+          return model
+        model = mk_rf()
+        #model = LogisticRegression() 
+        print model
         normalizer = ColumnNormalizer([p.normalizer for p in params])
         pipeline = Pipeline([ ('normalize', normalizer), ('model', model)])
         train_result = cross_validate_model(pipeline, x_train, y_train) 
         print train_result
         print "---"
-        if train_result.score > best_score:
+        if train_result and train_result.score >= best_score:
           best_score = train_result.score
- 
+          best_model = pipeline
           x_test, _ = \
            construct_dataset(testing_hdfs, params, future_offset, start_hour, end_hour)
           # x_test = normalize_data(x_test, normalizers = normalizers)
@@ -412,9 +449,16 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
           print "test  zero = %d, neg = %d, pos = %d" % \
             (np.sum(y_test == 0), np.sum(y_test < 0), np.sum(y_test > 0))
           pipeline.fit(x_train, y_train)
-          test_result, test_pred = score_trained_model(model, x_test, y_test)
+          test_pred = pipeline.predict(x_test)
+          test_prob = pipeline.predict_proba(x_test)
+          uncertain = np.max(test_prob, 0) < 0.5
+          test_pred[uncertain] = 0
           assert len(test_pred) == len(y_test), "len pred = %d, len y_test = %d" % (len(test_pred), len(y_test))
-          print test_result
+          test_result = prediction_score(y_test, test_pred)
+          print
+          print "Current best score %s, \ntrain result %s \ntest_result %s" % \
+            (best_score, train_result, test_result)
+          print
           print
         else:
           test_result = None
@@ -425,24 +469,30 @@ def eval_params(training_hdfs, testing_hdfs, old_params, new_param, start_hour, 
         print "Skipping due to bad data", param 
         results[param] = None
         print 
-  return results
+  return best_score, best_model, results
 
-def download_files(bucket, keys, parallel = True):
+def download_files(bucket, keys, parallel = False):
   hdfs = []
 
   def download(k):
-    return cloud_helpers.download_file_from_s3(bucket, k)
+    try:
+      return cloud_helpers.download_file_from_s3(bucket, k)
+    except:
+      try:
+        return cloud_helpers.download_file_from_s3(bucket, k)
+      except Exception, e:
+        return e
 
   def receive(filename):
-    print "Downloaded", filename
-    hdf = h5py.File(filename)
-    hdfs.append(hdf)
+    if isinstance(filename, str) or isinstance(filename, unicode):
+      print "Downloaded", filename
+      hdf = h5py.File(filename)
+      hdfs.append(hdf)
+    else:
+      # got back an exception from a worker, raise it 
+      raise filename
 
   if parallel:
-    #  pool = Pool(min(8, len(keys)))
-    #  pool.map_async(download, keys, callback = receive)
-    #  pool.close()
-    #  pool.join()
     map(receive, cloud.mp.iresult(cloud.mp.map(download, keys)))
       
   else:
@@ -474,7 +524,7 @@ def download_and_eval(bucket, training_keys, testing_keys, old_params, new_param
     
 def launch_jobs(hdf_bucket, training_keys, testing_keys, 
     raw_features = None, start_hour = 3, end_hour = 7, 
-    num_features = 1, future_offset = 600):
+    num_features = 1, future_offset = 600, profile = True):
   all_possible_params = gen_feature_params(raw_features)
 
   chosen_params = []
@@ -499,56 +549,53 @@ def launch_jobs(hdf_bucket, training_keys, testing_keys,
       cloud.map(worker_wrapper, all_possible_params, 
         _env = 'compute', 
         _label=label, 
-        _type = 'f2')
+        _type = 'f2', 
+        _profile = profile)
     results = {}
-    best = None
-    worst = None 
-    
-    for (i, results) in enumerate(cloud.iresult(jids)):
-      print "Received result:" 
+    best_result = None
+    best_model = None
+    for (i, (curr_best_score, curr_best_model, results)) in enumerate(cloud.iresult(jids)):
       if results is None:
         results = {}
       else:
         assert isinstance(results, dict)
+      print "Got %d results with best score = %s" % (len(results), curr_best_score)
       for (param, r) in results.items():
         key = tuple(chosen_params + [param])
         results[key] = r
-        if r is None:
-          print param, "<skipped>"
-        else:
+        #if r is None:
+          # print param, "<skipped>"
+        if r is not None:
           train_result, test_result = r
-          print param
-          print "result for training data:", train_result
-          print "result for testing data:", test_result
-          print
           score = train_result.score
-          
-          if best is None or not np.isfinite(best['train'].score) or \
-             best['train'].score <  score:
-            best  = { 
-                'params':key, 
-                'train': train_result,  
-                'test': test_result
-              }
-          elif worst is None or not np.isfinite(worst['train'].score) or \
-               worst['train'].score > score:
-            worst = { 
-              'params': key, 
-              'train': train_result,
+          if best_result is None or not np.isfinite(best_result['train'].score) or \
+             best_result['train'].score <  score:
+            print "New best:", key
+            print "result for training data:", train_result
+            if test_result: 
+              print "result for testing data:", test_result
+            print
+            best_result  = { 
+              'params':key, 
+              'train': train_result,  
               'test': test_result
             }
-    print "Current worst after result #%d for feature #%d: %s" % \
-      (i + 1, feature_num + 1, worst)
+            best_model = curr_best_model 
     print 
-    print "Current best after result #%d for feature #%d: %s" % \
-      (i + 1, feature_num + 1, best)
-    print 
-    chosen_params.append(best['params'][-1])
-  return best, worst, results
+    print "Current best for %d features: %s" % (feature_num+1, best_result)
+    print
+    curr_best_params = best_result['params']
+    if len(curr_best_params) < feature_num+1:
+      print "Got no improvement from adding %d'th feature, stopping..."
+      break
+    else:
+      chosen_params.append(curr_best_params[-1])
+  return best_result, best_model, results
 
      
 def collect_keys_and_launch(training_pattern, testing_pattern, 
-    start_hour = 3, end_hour = 7, num_features = 1, future_offset = 600):
+    start_hour = 3, end_hour = 7, num_features = 1, future_offset = 600,
+    profile = False):
   # if files are local then buckets are None
   # otherwise we expect HDFs to be on the same S3 bucket 
   
@@ -571,7 +618,8 @@ def collect_keys_and_launch(training_pattern, testing_pattern,
     testing_names = cloud_helpers.get_matching_key_names(testing_bucket, testing_pattern)
   else:
     assert False   
-    
+  assert len(training_names) > 0
+  assert len(testing_names) > 0
   assert training_bucket == testing_bucket, \
     "Expected training bucket %s to be same as testing bucket %s" % (training_bucket, testing_bucket)
  
@@ -580,7 +628,8 @@ def collect_keys_and_launch(training_pattern, testing_pattern,
     start_hour = start_hour, 
     end_hour = end_hour, 
     num_features = num_features, 
-    future_offset = future_offset)
+    future_offset = future_offset, 
+    profile = profile)
   
 
 from argparse import ArgumentParser 
@@ -597,14 +646,27 @@ parser.add_argument('--start-hour', type = int, default = 3, dest="start_hour")
 parser.add_argument('--end-hour', type = int, default = 7, dest="end_hour")
 parser.add_argument('--num-features', type=int, default = 1, dest='num_features')
 parser.add_argument('--future-ticks', type=int, default = 600, dest='future_ticks')
-
+parser.add_argument('--profile', default=False, action="store_true", dest="profile")
+parser.add_argument('--save-model', default=None, dest='model_filename')
 if __name__ == '__main__':
   args = parser.parse_args()
   #assert args.pattern 
   #assert len(args.pattern) > 0
-  best, worst, all_results = \
+  best_result, best_model, all_results = \
     collect_keys_and_launch(args.training_pattern, args.testing_pattern,  
-     args.start_hour, args.end_hour,  args.num_features)
+     args.start_hour, args.end_hour,  args.num_features, 
+     args.future_ticks, 
+     args.profile)
   print all_results
-  print "Worst: ", worst  
-  print "Best:", best
+  print
+  
+  print 
+  print "Best:", best_result
+  if args.model_filename:
+    print 
+    print "Writing model to file..."
+    f = open(args.model_filename)
+    import pickle 
+    pickle.dump(best_model, f)
+    f.close()
+    print "Done" 
