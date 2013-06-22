@@ -8,11 +8,11 @@ Two are the important things to note from the few lines of code that _4_aggregat
 (1)
 
 buck.groupby(timeAggregation).mean() , 
-means that we are going to apply the timeAggregation function in order to make groups of the data (technically this is our
-hash function and if you print the intermediate steps you will see the groups that are created based on it) and .mean()
-specifies how we are going to summarize the data in the columns. 
-We used the average (mean) of the respective data, because it is the one that makes more sense, but if it suits you, you can
-try other functions like sum(), std() or even create your own personal function to apply to the data.
+means that we are going to apply the timeAggregation function in order to make groups of the data 
+(technically this is our hash function) and if you print the intermediate steps you will see the groups 
+that are created based on it) and .mean() specifies how we are going to summarize the data in the columns. 
+We used the average (mean) of the respective data, because it is the one that makes more sense, but if it suits you, 
+you can try other functions like sum(), std() or even create your own personal function to apply to the data.
 Give it a try now!
 
 (2)
@@ -28,23 +28,25 @@ def timeAggregation(date):
     
 This is the function we created and fits our needs because it does two things in simultaneously.
 Hashes the time stamp of each row in the data frame and as a result of the hashing, returns a date which we
-later use in order to reindex the grouped data frame (pandas does not do this automatically and if you just try to group the 
-data you will miss all the information of the index as it will be replaced by 1,2,3 or whatever may be the return of
-the hash function).
+later use in order to reindex the grouped data frame (pandas does not do this automatically and if you just 
+try to group the data you will miss all the information of the index as it will be replaced by 1,2,3 or 
+whatever may be the return of the hash function).
 
 Let's see what we mean by analyzing the code in the function.
    
 aggregatedTimePoint= date.second - ((date.second%5))  #for now its 5 second frames!
-You will see for yourself that if you take the seconds of the date and you modulo them by 5 and then subtract the result
-from the original seconds, you will get the a multiply of a 5sec time frame.
-In this way dates 2012-08-08 00:00:45.442000, 2012-08-08 00:00:46.442000, 2012-08-08 00:00:48.442000, 2012-08-08 00:00:49.442000
-will be grouped in 2012-08-08 00:00:45 time stamp. (we discard the nanoseconds because we don't need that precision so we set them as zeros).
+You will see for yourself that if you take the seconds of the date and you modulo them by 5 and then subtract
+the result from the original seconds, you will get the a multiply of a 5sec time frame.
+In this way dates 2012-08-08 00:00:45.442000, 2012-08-08 00:00:46.442000, 2012-08-08 00:00:48.442000, 
+2012-08-08 00:00:49.442000 will be grouped in 2012-08-08 00:00:45 time stamp. 
+(we discard the nanoseconds because we don't need that precision so we set them as zeros).
 
-After that we create a new date with the aggregatedTimePoint as the second and therefore all those time stamps that we 
-noted above will return the same date, in which they will be grouped together.
+After that we create a new date with the aggregatedTimePoint as the second and therefore all those time stamps
+that we noted above will return the same date, in which they will be grouped together.
 
 If everything is clear up until now, you can easily understand that you can change the functionality by just 
-changing the aggregatedTimePoint's value (and of course setting it in the correct place in the new date --if you want for example ms precision).
+changing the aggregatedTimePoint's value (and of course setting it in the correct place in the new date --if you
+want for example ms precision).
 If we want to create 10 second frames we can just type this, aggregatedTimePoint= (date.second/10)*10 
 and if we wish to create 1 second frames we don't really need to do anything special than to pass the second itself
 as the aggregatedTimePoint and discard the millisecond detail.
