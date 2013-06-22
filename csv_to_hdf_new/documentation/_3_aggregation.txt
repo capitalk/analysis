@@ -1,0 +1,61 @@
+In the "Why" documents, I have been rambled on about how important it is to be able to aggregate and group
+our data in a fast and versatile way.
+Now is the time you have been eagerly waiting in order to find out how you can create your own time aggregated data.
+With only altering one line of code, you can create whatever aggregation you want from your couch.
+
+Two are the important things to note from the few lines of code that _4_aggregation.py script has.
+
+(1)
+
+buck.groupby(timeAggregation).mean() , 
+means that we are going to apply the timeAggregation function in order to make groups of the data (technically this is our
+hash function and if you print the intermediate steps you will see the groups that are created based on it) and .mean()
+specifies how we are going to summarize the data in the columns. 
+We used the average (mean) of the respective data, because it is the one that makes more sense, but if it suits you, you can
+try other functions like sum(), std() or even create your own personal function to apply to the data.
+Give it a try now!
+
+(2)
+
+def timeAggregation(date):
+    aggregatedTimePoint= date.second - ((date.second%5))  #for now its 5 second frames!
+    #aggregatedTimePoint= (date.second/10)*10 #for now its 10 second frames!
+    #aggregatedTimePoint= date.second - ((date.second%2)) #for now its 3 second frames
+    #aggregatedTimePoint= date.second #for now its 1 second frames
+    
+    newD= pd.datetime(date.year,date.month,date.day,date.hour,date.minute, aggregatedTimePoint)
+    return newD    
+    
+This is the function we created and fits our needs because it does two things in simultaneously.
+Hashes the time stamp of each row in the data frame and as a result of the hashing, returns a date which we
+later use in order to reindex the grouped data frame (pandas does not do this automatically and if you just try to group the 
+data you will miss all the information of the index as it will be replaced by 1,2,3 or whatever may be the return of
+the hash function).
+
+Let's see what we mean by analyzing the code in the function.
+   
+aggregatedTimePoint= date.second - ((date.second%5))  #for now its 5 second frames!
+You will see for yourself that if you take the seconds of the date and you modulo them by 5 and then subtract the result
+from the original seconds, you will get the a multiply of a 5sec time frame.
+In this way dates 2012-08-08 00:00:45.442000, 2012-08-08 00:00:46.442000, 2012-08-08 00:00:48.442000, 2012-08-08 00:00:49.442000
+will be grouped in 2012-08-08 00:00:45 time stamp. (we discard the nanoseconds because we don't need that precision so we set them as zeros).
+
+After that we create a new date with the aggregatedTimePoint as the second and therefore all those time stamps that we 
+noted above will return the same date, in which they will be grouped together.
+
+If everything is clear up until now, you can easily understand that you can change the functionality by just 
+changing the aggregatedTimePoint's value (and of course setting it in the correct place in the new date --if you want for example ms precision).
+If we want to create 10 second frames we can just type this, aggregatedTimePoint= (date.second/10)*10 
+and if we wish to create 1 second frames we don't really need to do anything special than to pass the second itself
+as the aggregatedTimePoint and discard the millisecond detail.
+
+Execution details
+-------------------
+As in every script typing -h will give you help in the execution procedure.
+But let's see what you need in order to run this script:
+	- One folder with all the HDF buckets for the pairs you wish to be aggregated (you need to run _2_alignReindexThemWithAllThedates script first).
+	- Optionally you can create yourself the output directory where the HDF buckets will be stored, but if you are bored, just specify the path and the script will create it for you.
+	
+[Basic]
+python _3_aggregation.py -i [path of the directory where your HDF from step 2 lie] -o [path of the directory to store the aggregated HDF buckets--don't forget to put a / in the end of the path]
+

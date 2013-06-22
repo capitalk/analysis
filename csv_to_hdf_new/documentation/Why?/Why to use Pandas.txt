@@ -1,0 +1,31 @@
+In Data Mining,and generally any application that involves analytic computations,
+one of the most important features is the data we have in our disposal.
+
+It is mostly preferable to be stored in a compact, efficient way, that takes into account the space/time locality of the data.
+For this reason we decided to use pandas, a very sophisticated library for data manipulation.
+The very promising thing about Pandas library is that it has a very large, continuously growing community behind it 
+(like Numpy, Scipy etc), thus it is easy enough to collaborate with others and report bugs/share ideas.
+
+Google is probably your best friend if you are wondering why to use Pandas in the first place and what does it have to offer. 
+For the sake of simplicity we will not refer furthermore about pandas efficiency but if you are interested 
+you can have a look at the following links: 
+http://pandas.pydata.org/
+http://wesmckinney.com/blog/?p=543
+http://wesmckinney.com/blog/?p=414
+http://wesmckinney.com/blog/?p=268
+http://stackoverflow.com/questions/8991709/why-are-pandas-merges-in-python-faster-than-data-table-merges-in-r
+http://pandas.pydata.org/pandas-docs/dev/pandas.pdf
+
+All in all, it performs quite well for io operations, reading/writing to HDF buckets, 
+performing costly operations like joins, as well as aligning and grouping data.
+Speaking of data alignment/aggregation, you can easily understand why we need a robust, 
+easy to operate, maintain and develop system. Our trading environment relies mostly on time series data 
+that we first of all need to align (because if we are not comparing time series in a specific time horizon 
+there is no reason in doing any further analysis between them) and secondly, 
+as we have in our possession a vast amount of data, we may need to aggregate them 
+and calculate statistics on more compact representations of them.
+
+Pandas provide very efficient ways to do that and with only a few lines of code you can merge tables of millions of data, 
+easily align and fill missing data and many more useful operations that we can build up on and incorporate our functionality.
+
+
