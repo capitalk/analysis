@@ -1,8 +1,0 @@
-This script fixes all the bugs we mentioned about the raw csv files and outputs them in exactly the same format as before.
-It still retains every message from the exchange. It is naive to write them in the file once more and not output only the correct
-order books, but we wanted to follow this approach in order to comply with all the work that has been done previously and was 
-based in this file format.
-
-Execution
----------
-python csvFixExactlyTheSame.py -i /home/elnio/Desktop/raw_august8/ -f FXCM_EURUSD_2012_08_08.csv -o /home/elnio/Desktop/fixedCSVs/
