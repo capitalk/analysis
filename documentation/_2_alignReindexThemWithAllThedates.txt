@@ -1,0 +1,55 @@
+This module assumes you have created the HDF buckets using the module 1_preallocate_readCSVandFix_Class.
+As a recap let's note that at this point you have an HDF bucket for each trading pair.
+Those buckets contain the whole amount of information, unaligned, exactly as we got it from the exchange.
+
+As you may imagine there is no point in calculating, for example the cross-correlation of the best
+bid prices amongst the EURUSD and the EURJPY, at this point.
+The reason; simply because they are totally unaligned. You can check that yourself by just printing
+out the first 100 values from both of them (don't try printing the whole bucket because it contains 
+roughly around 800k rows and 20 columns -- python will print them, but it takes time).
+
+Given that I have convinced you on the importance of data alignment lets see what we can do in
+order to tackle this issue.
+By running this script, you will perfectly align the data in every time point that exists between them.
+
+Let's do some math first, shall we?
+28 pairs x 800 thousand lines in each one of them (lets say that each one of them has 100k
+unique ticks-- which is in fact an underestimation because from what we have seen they have around 150k or even 200k).
+So 28x100k = 2.800.000 lines for every pair (in fact a true average is around 3-4 million time ticks). 
+
+But wait, based on the above sizes the join of 20 columns which results in so big data files must
+be a very costly and time consuming operation. And indeed it would be if we performed it with the naive way.
+Instead we are following a different procedure.
+We are creating a new data frame for every currency pair which has only one column, its index.
+Then we join all the newly created data frames and as a result we have a data frame which is
+practically the sorted dates from all the pairs.
+
+Then we take advantage of Pandas reindex function and we use the newly created total index data frame
+to reindex the old unaligned data frames. As a result we have NaN values in the new time ticks that there 
+is no record for and the previous prices for the rest ones.
+Now we fill the missing values by propagating forward the last known price/volume.
+Once this is finished we also use back propagation in order to fill the first rows which may have
+NaN in the first place (and there is no previous value to replace them by forward prop).
+
+We then output the newly created structures to HDFs, the same way as before.
+
+A very interesting option we have in the above procedure is the fact that we can select
+which pairs we want to align. The number of order books assumed before was for all the 28 pairs 
+but we can drastically decrease the size and the execution time if we only specify in the beginning of the program 
+that we are only interested on the EUR* pairs for example. 
+In this case the program will perform the join only on the indexes of the respective pairs.
+
+
+Execution details
+-------------------
+As in every script typing -h will give you help in the execution procedure.
+But let's see what you need in order to run this script:
+	- One folder with all the HDF buckets for the pairs you wish to be aligned (you need to run _1_preallocate_readCSVandFix_Class script first).
+	- Optionally you can create yourself the output directory where the HDF buckets will be stored, but if you are bored, just specify the path and the script will create it for you.
+	
+[Basic]
+python _2_alignReindexThemWithAllThedates.py -i [path of the directory where your HDF from step 1 lie] -o [path of the directory to store the aligned HDF buckets--don't forget to put a / in the end of the path]
+
+[Optional]
+python _2_alignReindexThemWithAllThedates.py -i [path of the directory where your HDF from step 1 lie] -o [path of the directory to store the aligned HDF buckets] -p [starting currency symbol of the pairs you want to align]
+Align onl the EUR pairs.

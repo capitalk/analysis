@@ -1,0 +1,18 @@
+As we mentioned before, the capitalkdf is initialized with -1 everywhere, in order to indicate
+that a negative value means no record for that depth of the order book.
+
+This may be okay, depending on the application we are going to use it for but it turns out that for some currency pairs
+the best bid or ask is empty in many time frames (many delete messages arrived), something which doesn't really conform
+with the machine learning purpose of LearnStream.
+Thus, so as not to throw junk in the time series that we are going to analyze, we search for -1s in the (Ask/Bid,Price,1) column 
+and replace the price and the volume of the respective position with the previous valid record.
+
+Execution details
+-------------------
+As in every script typing -h will give you help in the execution procedure.
+But let's see what you need in order to run this script:
+	- One folder with all the HDF buckets for the pairs you wish to be cleaned (we propose that you run _4_aggregation script first).
+	- Optionally you can create yourself the output directory where the HDF buckets will be stored, but if you are bored, just specify the path and the script will create it for you.
+	
+[Basic]
+python _4_RemoveMinusOnes.py -i [path of the directory where your HDF files lie] -o [path of the directory to store the clean HDF buckets--don't forget to put a / in the end of the path]

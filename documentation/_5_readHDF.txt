@@ -1,0 +1,132 @@
+This file servers mostly as a demonstration of some basic operations you can execute using 
+the CapitalK DataFrame structure.
+
+Below you can find a description of every method that is available in this short demo.
+
+The respective number in front of every demo will also be the number you should pass as a command line 
+argument during execution.
+
+(1)
+
+Print the capitalkdf. This way you can visualize what is the structure of the hierarchical pointers and get an idea
+of how and what field you can access every time. 
+Due to the fact that most of the buckets have many hundred thousand records, it could be wise to specify the time
+horizon for which you want to print the data frame. Simply pass a string at the "time" argument which defines portion 
+you want to examine.
+For example, time="0:100", will print the first 100 order books.
+Execution
+---------
+[basic]
+python _5_readHDF.py -c 1 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+[optional]
+python _5_readHDF.py -c 1 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5 -t 0:10
+
+
+(2)
+
+Print descriptive statistics for the bucket you specify as input.
+For example
+  				  A                                                                                                                                                          B                                                                                                                                             
+                  p                                                                        v                                                                                 p                                                                        v                                                                    
+                  1             2             3             4             5                1                2                3                4                5             1             2             3             4             5                1                2                3                4                5
+count  15831.000000  15831.000000  15831.000000  15831.000000  15831.000000     15831.000000     15831.000000     15831.000000     15831.000000     15831.000000  15831.000000  15831.000000  15831.000000  15831.000000  15831.000000     15831.000000     15831.000000     15831.000000     15831.000000     15831.000000
+mean       1.294007      1.294020      1.294031      1.293595      1.228659   1908708.194061   2745387.510812   4180800.771651   4720174.174191   4089805.809510      1.293890      1.293877      1.293865      1.293448      1.232672   2019290.826306   3030173.953212   4238518.867610   4556721.245398   3902475.062419
+std        0.002198      0.002197      0.002198      0.019649      0.295228   1145227.499405   1538003.989022   2283182.322548   2277544.133857   2210483.038256      0.002193      0.002194      0.002194      0.021957      0.281722   1193539.968381   1686985.356509   2179107.968251   2109854.213390   2042788.495832
+min        1.287966      1.287988      1.288005     -0.508617     -1.000000     40000.000000    100000.000000    100000.000000     50000.000000        -1.000000      1.287876      1.287860      1.287845     -1.000000     -1.000000     50000.000000    100000.000000    100000.000000        -1.000000        -1.000000
+25%        1.292674      1.292690      1.292700      1.292710      1.292279   1000000.000000   1607302.771855   2500000.000000   3071428.571429   2571428.571429      1.292536      1.292520      1.292506      1.292490      1.292095   1000000.000000   1764705.882353   2646606.334842   3040000.000000   2500000.000000
+50%        1.293570      1.293580      1.293590      1.293600      1.293464   1611111.111111   2456730.769231   3959459.459459   4500000.000000   3859113.270936      1.293462      1.293450      1.293439      1.293428      1.293279   1706060.606061   2789772.727273   4000000.000000   4375000.000000   3699166.666667
+75%        1.296522      1.296539      1.296550      1.296560      1.296270   2531128.875969   3515258.840483   5490322.795785   6000000.000000   5237171.052632      1.296394      1.296380      1.296370      1.296356      1.296070   2795454.545455   4000000.000000   5500000.000000   5751990.099010   5000000.000000
+max        1.297320      1.297330      1.297340      1.297350      1.297367  11378947.368421  14919354.838710  20721052.631579  17232000.000000  19500000.000000      1.297188      1.297170      1.297160      1.297150      1.297140  16216585.365854  14666666.666667  19257894.736842  16222222.222222  17800000.000000
+Execution
+---------
+python _5_readHDF.py -c 2 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+
+(3) 
+
+Find the maximum spread of a currency pair during the day. 
+We find the maximum spread in all the levels of the order book, not that it makes so much sense 2nd and below, but maybe it will some day...
+Execution
+---------
+python _5_readHDF.py -c 3 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+(4)
+
+We check for crossed markets during the day by checking if the bid price exceeds the ask price in any time stamp. 
+We are also reporting pseudo-crossed-markets in the deeper levels of the order book. 
+This is more of a sanity check than something meaningful, as if we haven't already found a crossed market in level 1,
+it really wouldn't be correct to find it in a deeper level.
+Although said the above, the script reports crossed markets in deeper level and close inspection reveals that they are caused
+by missing order for the bid or the ask price.
+For example if you have 4 records for the ask side and 5 for the bid side, the code will report a crossed market in level 5
+as it compares -1 (which indicates an empty position) with the value of the bid price (which hopefully is larger than -1).
+Execution
+---------
+python _5_readHDF.py -c 4 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+(5)
+
+Check for correlations between two different pairs for both the ask and the bid prices.
+You can optionally specify a time horizon during the day and determine if they are correlated for that portion of time.
+If you don't use the -t option, the script will check for correlations during the whole day.
+Execution
+---------
+[basic]
+python _5_readHDF.py -c 5 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5 -b2 FXCM_EURCAD_2012_12_07.h5
+[optional]
+python _5_readHDF.py -c 5 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5 -b2 FXCM_EURCAD_2012_12_07.h5 -t 50:2000
+
+(6)
+
+Lag plots are used to check if a data set or time series is random. 
+Random data should not exhibit any structure in the lag plot.  
+Non-random structure implies that the underlying data are not random.
+For now it may not seem like much, but later on we can define complex metrics and based on these plots determine
+if they have a sort of structure in them or if they are totally random.
+Execution
+---------
+python _5_readHDF.py -c 6 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+(7) 
+
+Autocorrelation plots are often used for checking randomness in time series.  
+This is done by computing autocorrelations for data values at varying time lags. 
+If time series is random, such autocorrelations should be near zero for any and all time-lag separations. 
+If time series is non-random then one or more of the autocorrelations will be significantly non-zero. 
+The horizontal lines displayed in the plot correspond to 95% and 99% confidence bands. 
+The dashed line is 99% confidence band.
+For now it may not seem like much, but later on we can define complex metrics and based on these plots determine
+if they have a sort of structure in them or if they are totally random.
+Execution
+---------
+python _5_readHDF.py -c 7 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -b FXCM_EURUSD_2012_12_07.h5
+
+(8)
+
+This script plots in the same graph all the bid/ask prices from all the currency pairs during one day so you can monitor
+them all together and extract meaningful conclusions.
+You can zoom in and out to each one of them by using the tools of interactive matplotlib.
+An important thing to note is that if you plot all the currency pairs the respective titles might overlap with the 
+plots from the above figures.
+In order to combat this, click the "configure subplots" icon at the top of the screen and increase/decrease the "hspace" bar.
+In a few seconds everything will look at its place.
+Execution
+---------
+python _5_readHDF.py -c 8 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedALL/
+
+(9)
+
+We thought it would be helpful to visualize the volumes of the trades for all the pairs as a bar plot, so we can determine
+any dependence between them, or extract other meaningful results.
+This script has still some issues, as there were not enough colors in matplotlib to distinguish 28 different bars so we must
+dig in a bit more and find how to make custom rgb colors.
+You can also specify a time horizon because the figure can't hold all the time points of the day. It is strongly recommended
+when you trying to visualize all the 28 pairs because the bar plot can't handle all the data very well.
+
+Execution
+---------
+[basic]
+python _5_readHDF.py -c 9 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/
+[optional]
+python _5_readHDF.py -c 9 -i /home/elnio/Desktop/CLEAN_december7_5sAggreatedEUR/ -t 10:1000
