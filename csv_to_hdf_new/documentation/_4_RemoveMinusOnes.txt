@@ -1,11 +1,12 @@
 As we mentioned before, the capitalkdf is initialized with -1 everywhere, in order to indicate
 that a negative value means no record for that depth of the order book.
 
-This may be okay, depending on the application we are going to use it for but it turns out that for some currency pairs
-the best bid or ask is empty in many time frames (many delete messages arrived), something which doesn't really conform
-with the machine learning purpose of LearnStream.
-Thus, so as not to throw junk in the time series that we are going to analyze, we search for -1s in the (Ask/Bid,Price,1) column 
-and replace the price and the volume of the respective position with the previous valid record.
+This may be okay, depending on the application we are going to use it for but it turns out that
+for some currency pairs the best bid or ask is empty in many time frames (many delete messages arrived), 
+something which doesn't really conform with the machine learning purpose of LearnStream.
+Thus, so as not to throw junk in the time series that we are going to analyze, we search for -1s in the 
+(Ask/Bid,Price,1) column and replace the price and the volume of the respective position with the previous 
+valid record.
 
 Execution details
 -------------------
